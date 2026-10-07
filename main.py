@@ -6,6 +6,7 @@ import os
 import sys
 import threading
 import subprocess
+import webbrowser
 from typing import Optional, Dict, Any
 from tkinter import filedialog, messagebox
 
@@ -673,7 +674,7 @@ class FolderLockApp(ctk.CTk):
 
         # Guide / Help row
         row_help = ctk.CTkFrame(card_opts, fg_color="transparent")
-        row_help.pack(fill="x", padx=12, pady=(4, 12))
+        row_help.pack(fill="x", padx=12, pady=(4, 6))
 
         self.lbl_s_help = ctk.CTkLabel(row_help, text=t("help_btn_tooltip"), font=ctk.CTkFont(size=12))
         self.lbl_s_help.pack(side="left")
@@ -686,6 +687,25 @@ class FolderLockApp(ctk.CTk):
             command=self._show_help_dialog
         )
         self.btn_open_help.pack(side="right")
+
+        # Developer / GitHub Profile row
+        row_dev = ctk.CTkFrame(card_opts, fg_color="transparent")
+        row_dev.pack(fill="x", padx=12, pady=(4, 12))
+
+        self.lbl_s_dev = ctk.CTkLabel(row_dev, text=t("setting_developer"), font=ctk.CTkFont(size=12))
+        self.lbl_s_dev.pack(side="left")
+
+        self.lbl_s_dev_val = ctk.CTkLabel(
+            row_dev,
+            text="canyrtcn",
+            font=ctk.CTkFont(size=12, weight="bold", underline=True),
+            text_color=("#0284c7", "#38bdf8"),
+            cursor="hand2"
+        )
+        self.lbl_s_dev_val.pack(side="right")
+        self.lbl_s_dev_val.bind("<Button-1>", lambda e: self._open_github_profile())
+        self.lbl_s_dev_val.bind("<Enter>", lambda e: self.lbl_s_dev_val.configure(text_color=("#0369a1", "#7dd3fc")))
+        self.lbl_s_dev_val.bind("<Leave>", lambda e: self.lbl_s_dev_val.configure(text_color=("#0284c7", "#38bdf8")))
 
         # Security Info
         card_sec = ctk.CTkFrame(container, corner_radius=8)
@@ -741,6 +761,15 @@ class FolderLockApp(ctk.CTk):
     def _show_help_dialog(self):
         HelpDialog(self)
 
+    def _open_github_profile(self):
+        try:
+            webbrowser.open_new_tab("https://github.com/canyrtcn")
+        except Exception:
+            try:
+                webbrowser.open("https://github.com/canyrtcn")
+            except Exception:
+                pass
+
     def _refresh_all_texts(self):
         self.title(f"{t('app_title')} - {t('app_subtitle')}")
         self.subtitle_lbl.configure(text=t("app_subtitle"))
@@ -794,6 +823,8 @@ class FolderLockApp(ctk.CTk):
             self.lbl_s_help.configure(text=t("help_btn_tooltip"))
         if hasattr(self, 'btn_open_help'):
             self.btn_open_help.configure(text=t("help_btn_tooltip"))
+        if hasattr(self, 'lbl_s_dev'):
+            self.lbl_s_dev.configure(text=t("setting_developer"))
         self.lbl_sec_t.configure(text=t("security_note_title"))
         self.lbl_sec_b.configure(text=t("security_note_text"))
 
