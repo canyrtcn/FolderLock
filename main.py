@@ -28,6 +28,8 @@ from crypto_engine import (
     CorruptedFileError,
     OperationCancelledError,
     recover_instant_folder,
+    recover_aes_folder,
+    recover_folder,
     VAULT_FILENAME,
     INSTANT_DATA_DIRNAME,
     UNLOCKER_FILENAME,
@@ -1493,7 +1495,7 @@ def main():
                 _show_quick_dialog(t("dialog_error"), "Password was not provided.", is_error=True)
             sys.exit(1)
 
-        success, msg = recover_instant_folder(target, password=pwd)
+        success, msg = recover_folder(target, password=pwd)
         if is_quiet:
             print(f"[{'SUCCESS' if success else 'ERROR'}] {msg}")
             sys.exit(0 if success else 1)

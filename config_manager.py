@@ -13,7 +13,7 @@ import shutil
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 
-from safe_fs import atomic_write_json
+from safe_fs import atomic_write_config_json
 
 APP_DIR_NAME = "FolderLock"
 
@@ -102,7 +102,7 @@ class ConfigManager:
 
     def save(self):
         try:
-            atomic_write_json(self.config_path, self.config)
+            atomic_write_config_json(self.config_path, self.config)
         except Exception as e:
             print(f"Error saving config atomically: {e}")
 

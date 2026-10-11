@@ -28,6 +28,7 @@ import tarfile
 import ctypes
 import subprocess
 import tempfile
+import hashlib
 import hmac
 import json
 import uuid
@@ -58,6 +59,8 @@ from safe_fs import (
     scan_source_tree,
     compute_file_sha256,
     is_same_volume,
+    verify_destination_path_safe,
+    safe_recreate_directories,
     WIN_NO_WINDOW
 )
 
@@ -319,33 +322,39 @@ def resolve_collision(dest_dir: str, name: str) -> str:
 
 
 def is_folderlock_instruction_file(file_path: str) -> bool:
-    """Checks whether a file was created by FolderLock as an instruction note."""
-    if not os.path.isfile(file_path):
-        return False
-    try:
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            header = f.read(len(FOLDERLOCK_OWNERSHIP_TAG) + 32)
-            return FOLDERLOCK_OWNERSHIP_TAG in header
-    except Exception:
-        return False
+    """Legacy parser, *not* proof that an existing file belongs to FolderLock.
+
+    A user can author the same textual marker, so callers must never use this
+    predicate to overwrite or delete a file.
+    """
+    return False
 
 
-def write_instruction_file(folder_path: str, content: str) -> bool:
-    """
-    Safely writes an instruction file to folder_path.
-    If INSTRUCTION_FILENAME already exists and is a user file (no ownership tag),
-    does NOT overwrite it. Instead, writes to an alternative name.
-    """
-    target = os.path.join(folder_path, INSTRUCTION_FILENAME)
-    if os.path.lexists(target):
-        if not is_folderlock_instruction_file(target):
-            target = os.path.join(folder_path, f"FolderLock_Instructions_{int(time.time())}.txt")
-    try:
-        with open(target, "w", encoding="utf-8") as f:
-            f.write(content)
-        return True
-    except Exception:
-        return False
+def write_instruction_file(folder_path: str, content: str, prefer_alternate: bool = False) -> bool:
+    """Create a note without changing any pre-existing user file."""
+    candidates = (("FolderLock_Instructions_Note.txt",) if prefer_alternate else
+                  (INSTRUCTION_FILENAME, "FolderLock_Instructions_Note.txt"))
+    for candidate in candidates:
+        target = os.path.join(folder_path, candidate)
+        try:
+            with open(target, "x", encoding="utf-8") as stream:
+                stream.write(content)
+            return True
+        except FileExistsError:
+            continue
+        except OSError:
+            return False
+    for _ in range(16):
+        target = os.path.join(folder_path, f"FolderLock_Instructions_{uuid.uuid4().hex}.txt")
+        try:
+            with open(target, "x", encoding="utf-8") as stream:
+                stream.write(content)
+            return True
+        except FileExistsError:
+            continue
+        except OSError:
+            return False
+    return False
 
 
 # ---------------- CRYPTOGRAPHIC UTILITIES ----------------
@@ -404,27 +413,70 @@ def dpapi_unprotect(cipher: bytes) -> bytes:
     return res
 
 
-def save_relock_config(folder_path: str, mode: str, salt_hex: str, hash_val: str, password: Optional[str] = None):
-    """Saves hidden credentials inside the unlocked folder so FolderLock can re-lock with the same password."""
-    folder_path = os.path.abspath(folder_path)
-    relock_file = os.path.join(folder_path, RELOCK_CONFIG_FILENAME)
-    data = {
-        "magic": "FLCK_RELOCK_V1",
-        "mode": mode,
-        "salt": salt_hex,
-        "hash": hash_val
-    }
+def is_authentic_relock_config(file_path: str) -> bool:
+    """
+    Validates whether an existing .flock_relock file is an authentic FolderLock configuration.
+    Must be a regular file (not symlink), valid JSON dict, with magic header 'FLCK_RELOCK_V1',
+    valid mode ('crypto' or 'instant'), and valid hex encoded salt and hash fields.
+    """
+    if not os.path.isfile(file_path):
+        return False
+    try:
+        st = os.lstat(file_path)
+        if stat.S_ISLNK(st.st_mode) or safe_fs.is_reparse_point(file_path):
+            return False
+        data = read_verified_json(file_path)
+        if not isinstance(data, dict):
+            return False
+        if data.get("magic") != "FLCK_RELOCK_V1":
+            return False
+        if data.get("mode") not in ("crypto", "instant"):
+            return False
+        salt = data.get("salt", "")
+        if not isinstance(salt, str) or (salt and not all(c in "0123456789abcdefABCDEF" for c in salt)):
+            return False
+        hash_val = data.get("hash", "")
+        if not isinstance(hash_val, str) or (hash_val and not all(c in "0123456789abcdefABCDEF" for c in hash_val)):
+            return False
+        if "dpapi_pwd" in data:
+            dpapi_hex = data.get("dpapi_pwd")
+            if not isinstance(dpapi_hex, str) or not all(c in "0123456789abcdefABCDEF" for c in dpapi_hex):
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def save_relock_config(folder_path: str, mode: str, salt_hex: str,
+                       hash_val: str, password: Optional[str] = None) -> bool:
+    """Best-effort convenience metadata. Never replace an existing file.
+
+    The public JSON magic/schema is not an ownership proof. Callers must not
+    overwrite even a JSON-shaped file. Existing re-lock data remains untouched.
+    """
+    relock_file = os.path.join(os.path.abspath(folder_path), RELOCK_CONFIG_FILENAME)
+    if os.path.lexists(relock_file):
+        return False
+    data = {"magic": "FLCK_RELOCK_V1", "mode": mode,
+            "salt": salt_hex, "hash": hash_val}
     if mode == "crypto" and password:
         try:
             data["dpapi_pwd"] = dpapi_protect(password.encode("utf-8")).hex()
-        except Exception as e:
-            print(f"[WARNING] DPAPI protection unavailable for re-lock config: {e}")
-
+        except Exception:
+            return False
     try:
-        atomic_write_json(relock_file, data)
+        with open(relock_file, "x", encoding="utf-8") as stream:
+            json.dump(data, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
         set_file_attributes(relock_file, hidden=True, system=True)
-    except Exception as e:
-        print(f"[WARNING] Failed saving relock config: {e}")
+        return True
+    except FileExistsError:
+        return False
+    except OSError:
+        # A partially written newly-created config is not trusted as source data.
+        # Do not perform a blind delete because ownership may have changed.
+        return False
 
 
 def get_relock_config(folder_path: str) -> Optional[Dict[str, Any]]:
@@ -853,13 +905,15 @@ def is_safe_tar_member(member: tarfile.TarInfo, dest_dir: str) -> bool:
     return True
 
 
-def verify_vault_integrity(vault_path: str, password: str) -> bool:
+def verify_vault_integrity(vault_path: str, password: str, expected_manifest: Optional[List[Dict[str, Any]]] = None) -> bool:
     """
     Verifies the complete end-to-end integrity of an encrypted AES-256-GCM vault archive:
     1. Verifies header verifier token with AES-GCM (FLCK03 or FLCK02).
     2. Decrypts every chunk through ChunkDecryptingReader, checking all GCM tags and AAD.
     3. Validates tar stream and all members with is_safe_tar_member.
-    4. Drains stream to authenticated EOF, verifying saw_last_chunk and no trailing data.
+    4. If expected_manifest is provided, computes SHA-256 of each decrypted member stream
+       and verifies 1:1 match with manifest.
+    5. Drains stream to authenticated EOF, verifying saw_last_chunk and no trailing data.
     """
     if not os.path.isfile(vault_path):
         raise FileNotFoundError(f"Vault not found: {vault_path}")
@@ -929,18 +983,47 @@ def verify_vault_integrity(vault_path: str, password: str) -> bool:
 
         # Header verified. Now verify the entire encrypted payload stream
         dummy_dir = os.path.dirname(os.path.abspath(vault_path))
+        expected_files: Dict[str, Optional[str]] = {}
+        verified_files: Set[str] = set()
+        if expected_manifest is not None:
+            expected_files = {m["rel_path"]: m.get("sha256") for m in expected_manifest if not m.get("is_dir")}
+
         try:
             with tarfile.open(mode="r|", fileobj=dec_reader) as tar:
                 for member in tar:
                     if not is_safe_tar_member(member, dummy_dir):
                         raise CorruptedFileError(f"Security error: unsafe member in archive: {member.name}")
+                    clean_name = member.name.replace("\\", "/")
                     if member.isreg():
                         f_mem = tar.extractfile(member)
                         if f_mem:
-                            while f_mem.read(65536):
-                                pass
+                            h = hashlib.sha256()
+                            while True:
+                                chunk = f_mem.read(65536)
+                                if not chunk:
+                                    break
+                                h.update(chunk)
+                            mem_hash = h.hexdigest()
+                            if expected_manifest is not None and clean_name in expected_files:
+                                exp_hash = expected_files[clean_name]
+                                if exp_hash and exp_hash != mem_hash:
+                                    raise CorruptedFileError(
+                                        f"Vault content mismatch: decrypted file {clean_name} SHA-256 "
+                                        f"({mem_hash}) does not match manifest ({exp_hash})."
+                                    )
+                                verified_files.add(clean_name)
+                    elif member.isdir():
+                        if expected_manifest is not None:
+                            verified_files.add(clean_name)
         except (tarfile.TarError, InvalidTag, CorruptedFileError) as e:
             raise CorruptedFileError(f"Vault data stream verification failed: {e}")
+
+        if expected_manifest is not None:
+            missing_files = set(expected_files.keys()) - verified_files
+            if missing_files:
+                raise CorruptedFileError(
+                    f"Vault archive incomplete: missing {len(missing_files)} file(s): {list(missing_files)[:5]}"
+                )
 
         # Drain dec_reader to EOF
         while dec_reader.read(65536):
@@ -1061,6 +1144,12 @@ def lock_folder(folder_path: str, password: str,
     if not password:
         raise ValueError("Password cannot be empty.")
 
+    # A legacy instruction-name collision is ambiguous: the textual ownership
+    # marker is user-forgeable. Refuse before changing the folder rather than
+    # deleting the file or silently replacing it with a generated note.
+    if os.path.lexists(os.path.join(folder_path, INSTRUCTION_FILENAME)):
+        raise CryptoError("Existing FolderLock_Instructions.txt cannot be authenticated as internal data; rename or back up this file before locking.")
+
     vault_file = os.path.join(folder_path, VAULT_FILENAME)
     if os.path.lexists(vault_file):
         raise CryptoError("A locked vault (.locked_vault) already exists in this directory. Please resolve before locking.")
@@ -1090,14 +1179,24 @@ def lock_folder(folder_path: str, password: str,
         if progress_callback:
             progress_callback(0.02, "Scanning folder contents...")
 
-        # Remove instruction file if it belongs to FolderLock
+        # Preserve pre-existing instruction name; pack it as user data.
         instruction_path = os.path.join(folder_path, INSTRUCTION_FILENAME)
-        if is_folderlock_instruction_file(instruction_path):
-            remove_verified_file(instruction_path, allowed_names={INSTRUCTION_FILENAME})
+        original_instruction_existed = os.path.lexists(instruction_path)
+        # Existing instruction-named files are user data; never delete by marker.
+
+        # Only this operation's verified root lock and journal are internal.
+        # Root .flock_meta and .flock_relock may be user-owned and must be packed.
+        active_reserved = {
+            VAULT_FILENAME, INSTANT_DATA_DIRNAME, JOURNAL_FILENAME,
+            INSTANT_JOURNAL_FILENAME, safe_fs.OP_LOCK_FILENAME,
+        }
+        # Ambiguous root journal names must never be silently excluded.
+        if os.path.lexists(os.path.join(folder_path, INSTANT_JOURNAL_FILENAME)):
+            raise CryptoError("Unexpected Instant journal in AES source folder; recovery required.")
 
         # Safe preflight scan
-        manifest, total_files, total_bytes = scan_source_tree(folder_path, RESERVED_METADATA_NAMES)
-        if total_files == 0:
+        manifest, total_files, total_bytes = scan_source_tree(folder_path, active_reserved)
+        if not manifest:
             raise ValueError("The folder contains no items to protect.")
 
         if total_bytes == 0:
@@ -1152,14 +1251,16 @@ def lock_folder(folder_path: str, password: str,
                         rel_p = item_info["rel_path"]
                         full_p = os.path.join(folder_path, rel_p.replace("/", os.sep))
 
-                        # Check that file did not change size since preflight
                         if not os.path.lexists(full_p):
-                            raise CryptoError(f"Source file disappeared during encryption: {rel_p}")
-                        st = os.lstat(full_p)
-                        if st.st_size != item_info["size"]:
-                            raise CryptoError(f"Source file modified during encryption: {rel_p}")
+                            raise CryptoError(f"Source item disappeared during encryption: {rel_p}")
 
-                        tar.add(full_p, arcname=rel_p, recursive=False)
+                        if item_info.get("is_dir"):
+                            tar.add(full_p, arcname=rel_p, recursive=False)
+                        else:
+                            st = os.lstat(full_p)
+                            if st.st_size != item_info["size"]:
+                                raise CryptoError(f"Source file modified during encryption: {rel_p}")
+                            tar.add(full_p, arcname=rel_p, recursive=False)
                 enc_writer.close()
 
             # State: VERIFYING
@@ -1167,7 +1268,7 @@ def lock_folder(folder_path: str, password: str,
                 progress_callback(0.92, "Verifying encryption archive integrity...")
 
             journal.set_state("VERIFYING")
-            verify_vault_integrity(temp_vault_file, password)
+            verify_vault_integrity(temp_vault_file, password, expected_manifest=manifest)
 
             # State: VAULT_COMMITTED
             if progress_callback:
@@ -1195,21 +1296,55 @@ def lock_folder(folder_path: str, password: str,
 
             journal.set_state("SOURCE_CLEANUP")
 
-            # Clean verified files in reverse hierarchy order
-            # First remove all regular files
+            # 1. Audit for any unexpected new items created during encryption
+            current_on_disk = set()
+            for r, d_list, f_list in os.walk(folder_path):
+                rel_r = os.path.relpath(r, folder_path)
+                if rel_r == ".":
+                    d_list[:] = [d for d in d_list if d not in active_reserved]
+                for d in d_list:
+                    current_on_disk.add(os.path.relpath(os.path.join(r, d), folder_path).replace("\\", "/"))
+                for f in f_list:
+                    if rel_r == "." and f in active_reserved:
+                        continue
+                    current_on_disk.add(os.path.relpath(os.path.join(r, f), folder_path).replace("\\", "/"))
+
+            manifest_paths = {item["rel_path"] for item in manifest}
+            unexpected = current_on_disk - manifest_paths
+            if unexpected:
+                journal.mark_recovery_required(
+                    f"Unexpected new items detected prior to cleanup: {list(unexpected)[:5]}"
+                )
+                raise CryptoError(
+                    f"Unexpected new item(s) detected in folder prior to source cleanup: {list(unexpected)[:5]}. "
+                    "Plaintext deletion refused; original files and verified vault preserved. Recovery required."
+                )
+
+            # 2. For each file, verify initial SHA-256 and size immediately before deletion
             for item_info in manifest:
+                if item_info.get("is_dir"):
+                    continue
                 rel_p = item_info["rel_path"]
                 full_p = os.path.join(folder_path, rel_p.replace("/", os.sep))
-                journal.record_pending_step({"action": "CLEANUP_FILE", "path": rel_p})
 
+                if not os.path.lexists(full_p):
+                    journal.mark_recovery_required(f"Source file disappeared prior to deletion: {rel_p}")
+                    raise CryptoError(f"Source file disappeared before deletion: {rel_p}")
+
+                # Record intent *before* acquiring the exclusive handle. This
+                # eliminates journal callbacks between the final verification
+                # and deletion of the same file identity.
+                journal.record_pending_step({"action": "CLEANUP_FILE", "path": rel_p})
                 try:
-                    remove_source_item_after_commit(full_p)
-                except Exception as ex:
-                    journal.mark_recovery_required(f"Failed to delete {rel_p}: {ex}")
-                    raise CryptoError(
-                        f"Failed to remove source file {rel_p} after vault commit. "
-                        "Original files and verified vault are safely preserved. Recovery required."
+                    safe_fs.delete_verified_source_file(
+                        full_p, item_info["sha256"], item_info["size"]
                     )
+                except Exception as ex:
+                    journal.mark_recovery_required(f"Source cleanup refused for {rel_p}: {ex}")
+                    raise CryptoError(
+                        f"Source content modified prior to deletion or source cleanup refused for {rel_p}; verified vault, "
+                        "remaining source files, and recovery journal retained."
+                    ) from ex
 
                 journal.record_completed_step({"action": "CLEANUP_FILE", "path": rel_p, "status": "REMOVED"})
 
@@ -1227,7 +1362,8 @@ def lock_folder(folder_path: str, password: str,
                     pass
 
             # Write instruction note
-            write_instruction_file(folder_path, README_LOCKED_TEXT)
+            write_instruction_file(folder_path, README_LOCKED_TEXT,
+                                   prefer_alternate=original_instruction_existed)
 
             # State: COMPLETED -> remove journal only upon full success
             journal.set_state("COMPLETED")
@@ -1257,7 +1393,8 @@ def lock_folder(folder_path: str, password: str,
 
 def unlock_folder(folder_path: str, password: str,
                   progress_callback: Optional[Callable[[float, str], None]] = None,
-                  cancel_check: Optional[Callable[[], bool]] = None) -> str:
+                  cancel_check: Optional[Callable[[], bool]] = None,
+                  is_recovery: bool = False) -> str:
     """
     Unlocks an in-place locked folder (AES-256-GCM / FLCK03 or legacy FLCK02).
     - Verifies password & end-to-end archive integrity before altering files.
@@ -1303,13 +1440,22 @@ def unlock_folder(folder_path: str, password: str,
         if progress_callback:
             progress_callback(pct, f"Decrypting: {format_bytes(processed_bytes)} / {format_bytes(vault_size)}")
 
-    with acquire_operation_lock(target_dir, "aes_unlock") as op_lock:
+    with acquire_operation_lock(target_dir, "aes_recovery" if is_recovery else "aes_unlock", is_recovery=is_recovery) as op_lock:
         journal_path = os.path.join(target_dir, JOURNAL_FILENAME)
         temp_extract_dir = tempfile.mkdtemp(prefix=".tmp_flock_extract_", dir=target_dir)
 
-        journal = TransactionJournal(journal_path, op_lock.operation_id, "aes_unlock", target_dir)
-        journal.add_temp_path(temp_extract_dir)
-        journal.set_state("EXTRACTING")
+        # Check for existing journal from interrupted operation:
+        existing_journal = TransactionJournal.load(journal_path) if os.path.isfile(journal_path) else None
+        if existing_journal is not None:
+            # Validate journal schema and adopt its operation_id to prevent overwrite conflicts
+            journal = existing_journal
+            journal.data["operation_type"] = "aes_unlock_recovery"
+            journal.add_temp_path(temp_extract_dir)
+            journal.set_state("EXTRACTING")
+        else:
+            journal = TransactionJournal(journal_path, op_lock.operation_id, "aes_unlock", target_dir)
+            journal.add_temp_path(temp_extract_dir)
+            journal.set_state("EXTRACTING")
 
         try:
             with open(vault_file, "rb") as f_in:
@@ -1362,27 +1508,70 @@ def unlock_folder(folder_path: str, password: str,
 
             journal.set_state("RESTORING_ITEMS")
 
-            # Move extracted items into target directory with collision resolution
-            restored_items = []
-            for item in os.listdir(temp_extract_dir):
-                src = os.path.join(temp_extract_dir, item)
-                dst = resolve_collision(target_dir, item)
-                journal.record_pending_step({
-                    "action": "RESTORE_ITEM",
-                    "src": src,
-                    "dst": dst
-                })
-                move_no_replace(src, dst)
-                journal.record_completed_step({
-                    "action": "RESTORE_ITEM",
-                    "src": src,
-                    "dst": dst,
-                    "status": "MOVED"
-                })
-                restored_items.append(dst)
+            # Pre-validate all target destination paths against symlinks, junctions, reparse points
+            for root_ext, dirs_ext, files_ext in os.walk(temp_extract_dir):
+                rel_d = os.path.relpath(root_ext, temp_extract_dir)
+                if rel_d != ".":
+                    verify_destination_path_safe(target_dir, rel_d)
+                for f_name in files_ext:
+                    rel_f = os.path.join(rel_d, f_name) if rel_d != "." else f_name
+                    verify_destination_path_safe(target_dir, rel_f)
 
-            # Safely remove empty temp extract directory
-            remove_temp_extract_dir(temp_extract_dir, operation_id=op_lock.operation_id)
+            # 1. Recreate directory hierarchy safely (including empty subdirectories)
+            for root_ext, dirs_ext, files_ext in os.walk(temp_extract_dir):
+                rel_d = os.path.relpath(root_ext, temp_extract_dir)
+                if rel_d != ".":
+                    safe_recreate_directories(target_dir, rel_d)
+
+            # 2. Restore all files with collision resolution and duplicate-safe checks
+            restored_items = []
+            for root_ext, dirs_ext, files_ext in os.walk(temp_extract_dir):
+                rel_d = os.path.relpath(root_ext, temp_extract_dir)
+                dest_sub = target_dir if rel_d == "." else os.path.join(target_dir, rel_d)
+                for f_name in files_ext:
+                    src_f = os.path.join(root_ext, f_name)
+                    dst_f = os.path.join(dest_sub, f_name)
+
+                    # Re-verify dst_f immediately before moving
+                    verify_destination_path_safe(target_dir, os.path.relpath(dst_f, target_dir))
+
+                    if os.path.lexists(dst_f):
+                        # File already on disk (e.g. interrupted SOURCE_CLEANUP left it behind):
+                        # If identical content, preserve disk copy and delete extract copy
+                        if compute_file_sha256(src_f) == compute_file_sha256(dst_f):
+                            os.remove(src_f)
+                            restored_items.append(dst_f)
+                            continue
+                        # If content differs, use safe collision resolution
+                        dst_f = resolve_collision(dest_sub, f_name)
+                        verify_destination_path_safe(target_dir, os.path.relpath(dst_f, target_dir))
+
+                    journal.record_pending_step({
+                        "action": "RESTORE_ITEM",
+                        "src": src_f,
+                        "dst": dst_f
+                    })
+                    move_no_replace(src_f, dst_f)
+                    journal.record_completed_step({
+                        "action": "RESTORE_ITEM",
+                        "src": src_f,
+                        "dst": dst_f,
+                        "status": "MOVED"
+                    })
+                    restored_items.append(dst_f)
+
+            # 3. Clean extracted subdirectories in reverse depth order
+            all_ext_dirs = []
+            for root_ext, dirs_ext, files_ext in os.walk(temp_extract_dir):
+                if root_ext != temp_extract_dir:
+                    all_ext_dirs.append(root_ext)
+            for d in sorted(all_ext_dirs, key=lambda p: len(p.split(os.sep)), reverse=True):
+                try:
+                    os.rmdir(d)
+                except OSError:
+                    pass
+
+            remove_temp_extract_dir(temp_extract_dir, operation_id=journal.data.get("operation_id"))
 
             if progress_callback:
                 progress_callback(0.95, "Finalizing restored folder...")
@@ -1395,8 +1584,7 @@ def unlock_folder(folder_path: str, password: str,
 
             # Clean old instruction file if present and write unlocked note
             instruction_path = os.path.join(target_dir, INSTRUCTION_FILENAME)
-            if is_folderlock_instruction_file(instruction_path):
-                remove_verified_file(instruction_path, allowed_names={INSTRUCTION_FILENAME})
+        # Existing instruction-named files are user data; never delete by marker.
             write_instruction_file(target_dir, README_UNLOCKED_TEXT)
 
             # Complete transaction
@@ -1450,10 +1638,10 @@ def lock_folder_instant(folder_path: str, password: Optional[str] = None,
         if os.path.lexists(locked_data_dir):
             raise CryptoError("Instant lock data container (.locked_data) already exists.")
 
-        # Clean previous FolderLock instruction file if present
+        # Preserve user-created instruction file.
         instruction_path = os.path.join(folder_path, INSTRUCTION_FILENAME)
-        if is_folderlock_instruction_file(instruction_path):
-            remove_verified_file(instruction_path, allowed_names={INSTRUCTION_FILENAME})
+        original_instruction_existed = os.path.lexists(instruction_path)
+        # Existing instruction-named files are user data; never delete by marker.
 
         # Collect user items to secure
         items_to_lock = [item for item in os.listdir(folder_path) if item not in RESERVED_METADATA_NAMES]
@@ -1528,16 +1716,33 @@ def lock_folder_instant(folder_path: str, password: Optional[str] = None,
             # Rollback if ACL application fails
             run_icacls_safe([locked_data_dir, "/remove:d", "*S-1-1-0"])
             remove_hidden_system_attributes(locked_data_dir)
+            rollback_failed = False
+            rollback_errors = []
             for orig_src, moved_dst in reversed(moved_items):
                 try:
                     if os.path.lexists(moved_dst):
                         move_no_replace(moved_dst, orig_src)
-                except Exception:
-                    pass
+                except Exception as ex:
+                    rollback_failed = True
+                    rollback_errors.append(f"{moved_dst} -> {orig_src}: {ex}")
+
+            # Verify that each moved item is actually restored
+            for orig_src, moved_dst in moved_items:
+                if not os.path.lexists(orig_src):
+                    rollback_failed = True
+                    rollback_errors.append(f"Item missing at original path: {orig_src}")
+
+            if rollback_failed:
+                journal.mark_recovery_required(f"ACL rollback failed: {'; '.join(rollback_errors)}")
+                raise CryptoError(
+                    f"Critical error: Failed to apply NTFS permissions and rollback failed to restore all items ({len(rollback_errors)} error(s)). "
+                    "Items remain safely in .locked_data container; metadata and journal preserved. Recovery required."
+                )
+
             remove_verified_file(meta_path, allowed_names={META_FILENAME})
             remove_empty_directory(locked_data_dir)
             journal.remove()
-            raise CryptoError("Failed to apply NTFS access control permissions.")
+            raise CryptoError("Failed to apply NTFS access control permissions. Operation safely rolled back.")
 
         # Remove instant journal once successfully locked
         journal.set_state("COMPLETED")
@@ -1547,7 +1752,8 @@ def lock_folder_instant(folder_path: str, password: Optional[str] = None,
             progress_callback(0.8, "Finalizing protection...")
 
         # Write instruction note
-        write_instruction_file(folder_path, README_LOCKED_TEXT)
+        write_instruction_file(folder_path, README_LOCKED_TEXT,
+                                   prefer_alternate=original_instruction_existed)
 
         if progress_callback:
             progress_callback(1.0, "Folder successfully locked!")
@@ -1571,15 +1777,27 @@ def unlock_folder_instant(folder_path: str, password: str,
     locked_data_dir = os.path.join(folder_path, INSTANT_DATA_DIRNAME)
 
     if not os.path.isdir(locked_data_dir):
-        # Legacy fallback if root was denied
+        # Legacy root-deny mode cannot be authenticated without verifiers.
+        # Do not mutate the user's ACL until proof has been validated.
+        if not salt_hex or not expected_hash_hex:
+            raise CorruptedFileError(
+                "Legacy root ACL cannot be unlocked without stored password "
+                "verifiers; use documented administrator recovery."
+            )
+        try:
+            salt_bytes = bytes.fromhex(salt_hex)
+            if len(salt_bytes) != SALT_SIZE or len(expected_hash_hex) != 64:
+                raise ValueError("Invalid legacy password verifier")
+            derived = derive_instant_hash(password, salt_bytes)
+        except (ValueError, TypeError) as exc:
+            raise CorruptedFileError("Invalid legacy verifier") from exc
+        if not hmac.compare_digest(derived, expected_hash_hex):
+            raise InvalidPasswordError("Incorrect password")
         res_chk = run_icacls_safe([folder_path])
-        if "*S-1-1-0:(OI)(CI)(DENY)" in (res_chk.stdout or "") or "(DENY)" in (res_chk.stdout or ""):
-            if salt_hex and expected_hash_hex:
-                salt_bytes = bytes.fromhex(salt_hex)
-                derived = derive_instant_hash(password, salt_bytes)
-                if not hmac.compare_digest(derived, expected_hash_hex):
-                    raise InvalidPasswordError("Incorrect password.")
-            run_icacls_safe([folder_path, "/remove:d", "*S-1-1-0"])
+        if "(DENY)" in (res_chk.stdout or "") and res_chk.returncode == 0:
+            res_rm = run_icacls_safe([folder_path, "/remove:d", "*S-1-1-0"])
+            if res_rm.returncode != 0:
+                raise CryptoError("Unable to restore legacy NTFS permissions")
             remove_hidden_system_attributes(folder_path)
             return True
         raise FileNotFoundError(f"No locked data container found inside: {folder_path}")
@@ -1625,7 +1843,11 @@ def unlock_folder_instant(folder_path: str, password: str,
 
         # Password verified! Restore DACL if SDDL was saved
         if saved_sddl:
-            restore_security_descriptor_sddl(locked_data_dir, saved_sddl)
+            ok_sddl = restore_security_descriptor_sddl(locked_data_dir, saved_sddl)
+            if not ok_sddl:
+                res_rm_d = run_icacls_safe([locked_data_dir, "/remove:d", "*S-1-1-0"])
+                if res_rm_d.returncode != 0:
+                    raise CryptoError("Failed to remove NTFS deny permissions or restore security descriptor.")
 
         # Restore items safely with collision resolution
         for item in os.listdir(locked_data_dir):
@@ -1646,8 +1868,7 @@ def unlock_folder_instant(folder_path: str, password: str,
 
         # Clean old instruction note and write unlocked note
         instruction_path = os.path.join(folder_path, INSTRUCTION_FILENAME)
-        if is_folderlock_instruction_file(instruction_path):
-            remove_verified_file(instruction_path, allowed_names={INSTRUCTION_FILENAME})
+        # Existing instruction-named files are user data; never delete by marker.
         write_instruction_file(folder_path, README_UNLOCKED_TEXT)
 
         return True
@@ -1676,7 +1897,7 @@ def recover_instant_folder(folder_path: str, password: Optional[str] = None) -> 
 
     meta_path = os.path.join(locked_data_dir, META_FILENAME)
 
-    with acquire_operation_lock(folder_path, "recovery"):
+    with acquire_operation_lock(folder_path, "instant_recovery", is_recovery=True):
         # Temporarily remove deny ACE to inspect metadata
         run_icacls_safe([locked_data_dir, "/remove:d", "*S-1-1-0"])
         try:
@@ -1721,16 +1942,29 @@ def recover_instant_folder(folder_path: str, password: Optional[str] = None) -> 
         # Password verified! Restore DACL if SDDL present
         saved_sddl = meta.get("sddl")
         if saved_sddl:
-            restore_security_descriptor_sddl(locked_data_dir, saved_sddl)
+            ok_sddl = restore_security_descriptor_sddl(locked_data_dir, saved_sddl)
+            if not ok_sddl:
+                res_rm_d = run_icacls_safe([locked_data_dir, "/remove:d", "*S-1-1-0"])
+                if res_rm_d.returncode != 0:
+                    return False, "Failed to restore container security descriptor."
 
         restored_count = 0
+        restore_failed = False
+        restore_errors = []
         for item in os.listdir(locked_data_dir):
             if item == META_FILENAME:
                 continue
             src = os.path.join(locked_data_dir, item)
             dst = resolve_collision(folder_path, item)
-            move_no_replace(src, dst)
-            restored_count += 1
+            try:
+                move_no_replace(src, dst)
+                restored_count += 1
+            except Exception as ex:
+                restore_failed = True
+                restore_errors.append(str(ex))
+
+        if restore_failed:
+            return False, f"Failed to restore all items: {'; '.join(restore_errors)}. Metadata and container preserved."
 
         remove_verified_file(meta_path, allowed_names={META_FILENAME})
         remove_empty_directory(locked_data_dir)
@@ -1744,11 +1978,117 @@ def recover_instant_folder(folder_path: str, password: Optional[str] = None) -> 
                 pass
 
         instruction_path = os.path.join(folder_path, INSTRUCTION_FILENAME)
-        if is_folderlock_instruction_file(instruction_path):
-            remove_verified_file(instruction_path, allowed_names={INSTRUCTION_FILENAME})
+        # Existing instruction-named files are user data; never delete by marker.
         write_instruction_file(folder_path, README_UNLOCKED_TEXT)
 
         return True, f"Successfully recovered {restored_count} item(s)."
+
+
+# ---------------- AES LOCK RECOVERY OPERATION ----------------
+
+def recover_aes_folder(folder_path: str, password: str) -> Tuple[bool, str]:
+    """
+    Safely recovers an interrupted AES-locked folder.
+    - Validates journal and vault existence.
+    - Verifies password and vault archive integrity before touching any files.
+    - If vault or password invalid: preserves vault, journal, and files intact.
+    - Safely extracts and restores all items with collision resolution.
+    - Removes vault only after full verification.
+    """
+    folder_path = validate_protection_root(folder_path)
+    vault_file = os.path.join(folder_path, VAULT_FILENAME)
+    journal_path = os.path.join(folder_path, JOURNAL_FILENAME)
+
+    if not os.path.isfile(vault_file):
+        if os.path.isfile(journal_path):
+            j = TransactionJournal.load(journal_path)
+            if j and isinstance(j.data, dict):
+                j_target = j.data.get("target_path")
+                j_op_type = j.data.get("operation_type")
+                j_op_id = j.data.get("operation_id")
+                j_schema = j.data.get("schema_version")
+                j_state = j.data.get("state")
+
+                # Validate journal fields and target match
+                if (j_target and os.path.normcase(os.path.abspath(j_target)) == os.path.normcase(folder_path)
+                        and j_op_type == "aes_lock"
+                        and j_op_id
+                        and j_schema in ("1.0.3", "1.0.2")
+                        and j_state in ("PREPARING", "ENCRYPTING", "VERIFYING")):
+                    # A pre-commit state is not proof that sources survived.
+                    # Keep journal if any source has been removed or changed.
+                    manifest = j.data.get("source_manifest")
+                    if not isinstance(manifest, list) or not manifest:
+                        return False, "Journal source manifest missing; manual recovery required."
+                    try:
+                        expected_paths = set()
+                        for item in manifest:
+                            if not isinstance(item, dict):
+                                raise CryptoError("Invalid manifest entry")
+                            rel_path = item.get("rel_path")
+                            if not is_safe_relative_path(rel_path, folder_path):
+                                raise CryptoError("Unsafe source manifest path")
+                            if rel_path in expected_paths:
+                                raise CryptoError("Duplicate source manifest path")
+                            expected_paths.add(rel_path)
+                            full_path = os.path.join(folder_path, rel_path.replace("/", os.sep))
+                            if safe_fs.is_reparse_point(full_path):
+                                raise CryptoError("Source became a reparse point")
+                            if item.get("is_dir"):
+                                if not os.path.isdir(full_path):
+                                    raise CryptoError(f"Missing source directory: {rel_path}")
+                            else:
+                                if not os.path.isfile(full_path):
+                                    raise CryptoError(f"Missing source file: {rel_path}")
+                                if os.path.getsize(full_path) != item.get("size"):
+                                    raise CryptoError(f"Source size changed: {rel_path}")
+                                if compute_file_sha256(full_path) != item.get("sha256"):
+                                    raise CryptoError(f"Source hash changed: {rel_path}")
+                    except (OSError, CryptoError, TypeError, ValueError) as exc:
+                        return False, f"Cannot confirm pre-commit source integrity: {exc}; journal preserved."
+                    # Only when all original inputs are verified may the
+                    # incomplete journal be retired; orphaned temporary files
+                    # remain untouched for separate forensic recovery.
+                    j.remove()
+                    if os.path.lexists(journal_path):
+                        return False, "Failed retiring journal; retry manual recovery."
+                    return True, "Pre-commit source manifest fully verified; journal retired."
+                else:
+                    return False, "Unrecognized or mismatched journal found without valid vault. Files preserved."
+        return False, f"No locked vault found inside: {folder_path}"
+
+    try:
+        verify_file_password(vault_file, password)
+        verify_vault_integrity(vault_file, password)
+    except Exception as e:
+        return False, f"Vault recovery verification failed: {e}. Vault and files preserved."
+
+    try:
+        unlock_folder(folder_path, password, is_recovery=True)
+        return True, "Successfully recovered all items from encrypted vault."
+    except Exception as e:
+        return False, f"Failed during recovery extraction: {e}"
+
+
+def recover_folder(folder_path: str, password: Optional[str] = None) -> Tuple[bool, str]:
+    """
+    Unified recovery entry point for both Instant Lock and AES-256-GCM folders.
+    Requires password verification. Preserves all files on failure.
+    """
+    folder_path = validate_protection_root(folder_path)
+    locked_data_dir = os.path.join(folder_path, INSTANT_DATA_DIRNAME)
+    vault_file = os.path.join(folder_path, VAULT_FILENAME)
+    journal_path = os.path.join(folder_path, JOURNAL_FILENAME)
+    instant_journal_path = os.path.join(folder_path, INSTANT_JOURNAL_FILENAME)
+
+    if os.path.isdir(locked_data_dir) or os.path.isfile(instant_journal_path):
+        return recover_instant_folder(folder_path, password)
+    elif os.path.isfile(vault_file) or os.path.isfile(journal_path):
+        if not password:
+            return False, "Password is required for AES vault recovery."
+        return recover_aes_folder(folder_path, password)
+    else:
+        return False, "No locked vault or recovery data found in folder."
 
 
 # ---------------- 1-CLICK RE-LOCK OPERATION ----------------
