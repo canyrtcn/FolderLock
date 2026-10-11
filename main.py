@@ -37,7 +37,7 @@ from crypto_engine import (
     LOCKER_FILENAME,
     LOCKER_TR_FILENAME
 )
-from translations import t, set_current_lang, get_current_lang
+from translations import t, set_current_lang, get_current_lang, APP_VERSION
 from config_manager import ConfigManager
 from ui_dialogs import ModernPasswordDialog, HelpDialog
 from ui_icons import get_theme_image, get_eye_image
@@ -715,6 +715,21 @@ class FolderLockApp(ctk.CTk):
         self.lbl_s_dev_val.bind("<Enter>", lambda e: self.lbl_s_dev_val.configure(text_color=("#0369a1", "#7dd3fc")))
         self.lbl_s_dev_val.bind("<Leave>", lambda e: self.lbl_s_dev_val.configure(text_color=("#0284c7", "#38bdf8")))
 
+
+        # Installed application version (read-only, no network request)
+        row_version = ctk.CTkFrame(card_opts, fg_color="transparent")
+        row_version.pack(fill="x", padx=12, pady=(4, 6))
+
+        self.lbl_s_version = ctk.CTkLabel(
+            row_version, text=t("setting_version"), font=ctk.CTkFont(size=12)
+        )
+        self.lbl_s_version.pack(side="left")
+
+        self.lbl_s_version_val = ctk.CTkLabel(
+            row_version, text=f"v{APP_VERSION}", font=ctk.CTkFont(size=12, weight="bold")
+        )
+        self.lbl_s_version_val.pack(side="right")
+
         # Windows Explorer Context Menu row
         row_shell = ctk.CTkFrame(card_opts, fg_color="transparent")
         row_shell.pack(fill="x", padx=12, pady=(4, 12))
@@ -879,6 +894,8 @@ class FolderLockApp(ctk.CTk):
             self.btn_open_help.configure(text=t("help_btn_tooltip"))
         if hasattr(self, 'lbl_s_dev'):
             self.lbl_s_dev.configure(text=t("setting_developer"))
+        if hasattr(self, 'lbl_s_version'):
+            self.lbl_s_version.configure(text=t("setting_version"))
         if hasattr(self, 'lbl_s_shell'):
             self.lbl_s_shell.configure(text=t("setting_shell_integration"))
         self._refresh_shell_button()
@@ -1422,7 +1439,7 @@ def main():
     # Quick check for help
     if any(arg in ["--help", "-h", "/?", "-help"] for arg in args):
         help_text = (
-            "FolderLock v1.0.4 - Smart Folder Protection\n\n"
+            f"FolderLock v{APP_VERSION} - Smart Folder Protection\n\n"
             "Usage:\n"
             "  FolderLock.exe [options] [folder_path]\n\n"
             "Options:\n"
@@ -1443,7 +1460,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(
         prog="FolderLock",
-        description="FolderLock v1.0.4 - Smart Folder Protection",
+        description=f"FolderLock v{APP_VERSION} - Smart Folder Protection",
         add_help=False
     )
     parser.add_argument("--quiet", "-q", action="store_true", dest="quiet")

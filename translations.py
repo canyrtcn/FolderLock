@@ -5,12 +5,15 @@ Supports English (default) and Turkish.
 
 from typing import Dict, Any
 
+# One source for displayed application version across GUI and CLI.
+APP_VERSION = "1.0.4"
+
 TRANSLATIONS: Dict[str, Dict[str, str]] = {
     "en": {
         # App Info
         "app_title": "FolderLock",
         "app_subtitle": "Smart Folder Protection",
-        "version": "1.0.3",
+        "version": APP_VERSION,
 
         # Tabs
         "tab_lock": "Lock Folder",
@@ -102,6 +105,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "setting_lang": "Language:",
         "setting_theme": "Theme:",
         "setting_developer": "Developer:",
+        "setting_version": "Version:",
         "setting_shell_integration": "Explorer Context Menu:",
         "shell_status_enabled": "Enabled",
         "shell_status_disabled": "Disabled",
@@ -138,7 +142,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # App Info
         "app_title": "FolderLock",
         "app_subtitle": "Akıllı Klasör Kilitleyici",
-        "version": "1.0.3",
+        "version": APP_VERSION,
 
         # Tabs
         "tab_lock": "Klasör Kilitle",
@@ -230,6 +234,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "setting_lang": "Dil (Language):",
         "setting_theme": "Tema:",
         "setting_developer": "Geliştirici:",
+        "setting_version": "Sürüm:",
         "setting_shell_integration": "Gezgin Sağ Tık Menüsü:",
         "shell_status_enabled": "Etkin",
         "shell_status_disabled": "Devre Dışı",
