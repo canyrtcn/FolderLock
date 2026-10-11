@@ -351,37 +351,56 @@ def write_instruction_file(folder_path: str, content: str,
     verified source hash equals the generated guide. Recreating the same bytes
     allows AES extraction to deduplicate by hash without multiplying notes.
     """
+    # Use byte-identical content across operating systems. Older Windows
+    # versions wrote text-mode CRLF; recognize those exact bytes as a legacy
+    # variant without modifying the existing user-owned file.
     payload = content.encode("utf-8")
-    expected_hash = hashlib.sha256(payload).hexdigest()
+    legacy_crlf_payload = payload.replace(b"\n", b"\r\n")
+    recognized_payloads = {
+        hashlib.sha256(p).hexdigest(): p
+        for p in (payload, legacy_crlf_payload)
+    }
     sources = source_note_hashes or {}
     names = (INSTRUCTION_FILENAME, "FolderLock_Instructions_Note.txt")
 
-    # Idempotence: an identical generated guide already exists. This only
-    # suppresses a new write; it never deletes or modifies an existing file.
-    for name in names:
+    # A previous buggy build may have created a UUID-named guide. If an
+    # identical guide remains, do not create yet another copy. Never delete,
+    # rename or overwrite any matching file.
+    try:
+        existing_names = [n for n in os.listdir(folder_path)
+                          if n in names or (
+                              n.startswith("FolderLock_Instructions_")
+                              and n.endswith(".txt"))]
+    except OSError:
+        return False
+    for name in existing_names:
         path = os.path.join(folder_path, name)
         try:
-            if (not os.path.islink(path) and os.path.isfile(path)
-                    and os.stat(path).st_size == len(payload)):
-                with open(path, "rb") as f:
-                    if f.read(len(payload) + 1) == payload:
+            if not os.path.islink(path) and os.path.isfile(path):
+                size = os.stat(path).st_size
+                if size in (len(payload), len(legacy_crlf_payload)):
+                    with open(path, "rb") as stream:
+                        data = stream.read(size + 1)
+                    if data == payload or data == legacy_crlf_payload:
                         return True
         except OSError:
             pass
 
-    # Reuse the same name for a byte-identical neutral guide. Its encrypted
-    # source copy will verify equal upon restore, so no extra note accumulates.
+    # If the source note was included in the vault, recreate the identical
+    # bytes under the same name. Unlock will deduplicate the matching copy.
+    # A different user note is never overwritten: use another name instead.
     candidates = ((names[1], names[0]) if prefer_alternate and
-                  sources.get(INSTRUCTION_FILENAME) != expected_hash else names)
+                  sources.get(INSTRUCTION_FILENAME) not in recognized_payloads
+                  else names)
     for candidate in candidates:
-        # A pre-lock user file will be restored from the vault. Do not create
-        # a new guide at its old path unless the bytes are *identical*.
-        if candidate in sources and sources[candidate] != expected_hash:
+        source_hash = sources.get(candidate)
+        if source_hash is not None and source_hash not in recognized_payloads:
             continue
         target = os.path.join(folder_path, candidate)
+        to_write = recognized_payloads.get(source_hash, payload)
         try:
-            with open(target, "x", encoding="utf-8") as stream:
-                stream.write(content)
+            with open(target, "xb") as stream:
+                stream.write(to_write)
             return True
         except FileExistsError:
             continue
@@ -394,8 +413,8 @@ def write_instruction_file(folder_path: str, content: str,
             continue
         target = os.path.join(folder_path, candidate)
         try:
-            with open(target, "x", encoding="utf-8") as stream:
-                stream.write(content)
+            with open(target, "xb") as stream:
+                stream.write(payload)
             return True
         except FileExistsError:
             continue
@@ -1825,8 +1844,14 @@ def lock_folder_instant(folder_path: str, password: Optional[str] = None,
         if progress_callback:
             progress_callback(0.8, "Finalizing protection...")
 
-        # Write instruction note
-        if hashlib.sha256(README_GENERAL_GUIDE.encode("utf-8")).hexdigest() not in source_note_hashes.values():
+        # The source guide may be the canonical LF form or a Windows CRLF
+        # legacy guide. Do not create a second note for either form.
+        guide_bytes = README_GENERAL_GUIDE.encode("utf-8")
+        guide_hashes = {
+            hashlib.sha256(data).hexdigest()
+            for data in (guide_bytes, guide_bytes.replace(b"\n", b"\r\n"))
+        }
+        if not guide_hashes.intersection(source_note_hashes.values()):
             write_instruction_file(folder_path, README_GENERAL_GUIDE,
                                    prefer_alternate=original_instruction_existed,
                                    source_note_hashes=source_note_hashes)

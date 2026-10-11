@@ -10,9 +10,13 @@ import unittest
 from crypto_engine import (
     INSTRUCTION_FILENAME,
     README_UNLOCKED_TEXT,
+    README_GENERAL_GUIDE,
     FOLDERLOCK_OWNERSHIP_TAG,
     lock_folder,
     unlock_folder,
+    lock_folder_instant,
+    unlock_folder_instant,
+    write_instruction_file,
 )
 
 
@@ -58,6 +62,50 @@ class InstructionRelockRegression(unittest.TestCase):
             unlock_folder(directory, "Synthetic-Test-Only-Password!")
             with open(user_file, encoding="utf-8") as f:
                 self.assertEqual(f.read(), README_UNLOCKED_TEXT)
+
+
+    def test_created_guide_bytes_are_platform_independent(self):
+        with tempfile.TemporaryDirectory(prefix="fl_guide_bytes_") as directory:
+            self.assertTrue(write_instruction_file(directory, README_GENERAL_GUIDE))
+            with open(os.path.join(directory, INSTRUCTION_FILENAME), "rb") as stream:
+                self.assertEqual(stream.read(), README_GENERAL_GUIDE.encode("utf-8"))
+
+    def test_legacy_windows_crlf_guide_relock_without_duplicates(self):
+        with tempfile.TemporaryDirectory(prefix="fl_legacy_crlf_") as directory:
+            path = os.path.join(directory, INSTRUCTION_FILENAME)
+            original = README_GENERAL_GUIDE.replace("\n", "\r\n").encode("utf-8")
+            with open(path, "wb") as stream:
+                stream.write(original)
+            with open(os.path.join(directory, "doc.txt"), "wb") as stream:
+                stream.write(b"SYNTHETIC DOCUMENT")
+            for _ in range(3):
+                lock_folder(directory, "Synthetic-Test-Only-Password!")
+                self.assertEqual(open(path, "rb").read(), original)
+                unlock_folder(directory, "Synthetic-Test-Only-Password!")
+                with open(path, "rb") as stream:
+                    self.assertEqual(stream.read(), original)
+                self.assertEqual(
+                    len([n for n in os.listdir(directory)
+                         if n.startswith("FolderLock_Instructions")]), 1
+                )
+
+    @unittest.skipUnless(os.name == "nt", "Requires Windows NTFS ACLs")
+    def test_instant_legacy_crlf_guide_does_not_multiply(self):
+        with tempfile.TemporaryDirectory(prefix="fl_instant_crlf_") as directory:
+            path = os.path.join(directory, INSTRUCTION_FILENAME)
+            original = README_GENERAL_GUIDE.replace("\n", "\r\n").encode("utf-8")
+            with open(path, "wb") as stream:
+                stream.write(original)
+            with open(os.path.join(directory, "doc.txt"), "wb") as stream:
+                stream.write(b"SYNTHETIC DOCUMENT")
+            lock_folder_instant(directory, "Synthetic-Test-Only-Password!")
+            unlock_folder_instant(directory, "Synthetic-Test-Only-Password!")
+            with open(path, "rb") as stream:
+                self.assertEqual(stream.read(), original)
+            self.assertEqual(
+                len([n for n in os.listdir(directory)
+                     if n.startswith("FolderLock_Instructions")]), 1
+            )
 
 
 if __name__ == "__main__":
