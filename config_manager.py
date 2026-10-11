@@ -3,12 +3,17 @@ FolderLock - Configuration and Vault Registry Manager
 Handles persistent settings (language, theme) and tracks locked folders.
 Defaults to English ('en') unless explicitly changed by the user.
 Follows Windows system theme on first launch, then preserves user preference.
+Uses atomic JSON writes and preserves corrupted config backups.
 """
 
 import os
 import json
+import copy
+import shutil
 from datetime import datetime
 from typing import Dict, List, Any, Optional
+
+from safe_fs import atomic_write_json
 
 APP_DIR_NAME = "FolderLock"
 
@@ -72,27 +77,34 @@ class ConfigManager:
             try:
                 with open(self.config_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    merged = DEFAULT_CONFIG.copy()
-                    merged.update(data)
-                    # If user never explicitly clicked to choose a language, enforce English default
-                    if not merged.get("user_selected_language", False):
-                        merged["language"] = "en"
-                    # If user never explicitly toggled theme, follow Windows theme
-                    if not merged.get("user_selected_theme", False):
-                        merged["theme"] = detect_windows_theme()
-                    return merged
-            except Exception:
-                pass
-        cfg = DEFAULT_CONFIG.copy()
+                if not isinstance(data, dict):
+                    raise ValueError("Config root must be a JSON dictionary.")
+                merged = copy.deepcopy(DEFAULT_CONFIG)
+                merged.update(data)
+                # If user never explicitly clicked to choose a language, enforce English default
+                if not merged.get("user_selected_language", False):
+                    merged["language"] = "en"
+                # If user never explicitly toggled theme, follow Windows theme
+                if not merged.get("user_selected_theme", False):
+                    merged["theme"] = detect_windows_theme()
+                return merged
+            except Exception as e:
+                # Corrupted or unreadable config: preserve corrupted backup before defaulting
+                corrupt_backup = f"{self.config_path}.corrupt.{int(datetime.now().timestamp())}"
+                try:
+                    shutil.copy2(self.config_path, corrupt_backup)
+                except Exception:
+                    pass
+                print(f"[WARNING] Corrupted configuration preserved at {corrupt_backup}: {e}")
+        cfg = copy.deepcopy(DEFAULT_CONFIG)
         cfg["theme"] = detect_windows_theme()
         return cfg
 
     def save(self):
         try:
-            with open(self.config_path, "w", encoding="utf-8") as f:
-                json.dump(self.config, f, ensure_ascii=False, indent=2)
+            atomic_write_json(self.config_path, self.config)
         except Exception as e:
-            print(f"Error saving config: {e}")
+            print(f"Error saving config atomically: {e}")
 
     @property
     def language(self) -> str:

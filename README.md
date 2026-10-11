@@ -150,6 +150,7 @@ The executable is generated under `dist/`.
 ```text
 main.py                # Main CustomTkinter application and CLI entrypoint
 crypto_engine.py       # Instant-lock and AES-GCM (FLCK03) protection logic
+safe_fs.py             # Hardened Windows filesystem abstraction & locking
 config_manager.py      # User settings and local vault registry
 shell_integration.py   # Windows Explorer integration
 translations.py        # English/Turkish localized strings

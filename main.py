@@ -7,7 +7,8 @@ import sys
 import threading
 import subprocess
 import webbrowser
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+import tkinter as tk
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
@@ -63,6 +64,7 @@ class InFolderUnlockApp(ctk.CTk):
         self.minsize(400, 250)
         self.resizable(False, False)
 
+        self.protocol("WM_DELETE_WINDOW", self._on_closing)
         self._set_icon()
 
         container = ctk.CTkFrame(self, corner_radius=10)
@@ -196,19 +198,29 @@ class InFolderUnlockApp(ctk.CTk):
 
                 self.after(0, self._on_success)
             except InvalidPasswordError:
-                self.after(0, lambda: self._on_fail(t("err_wrong_password")))
+                self.after(0, lambda err=t("err_wrong_password"): self._on_fail(err))
             except Exception as e:
-                self.after(0, lambda: self._on_fail(str(e)))
+                self.after(0, lambda err=str(e): self._on_fail(err))
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _on_closing(self):
+        if self.is_busy:
+            messagebox.showwarning(t("dialog_warning"), "An operation is currently in progress. Please wait.")
+            return
+        self.destroy()
+
     def _on_success(self):
+        if not self.winfo_exists():
+            return
         self.withdraw()
         messagebox.showinfo(t("dialog_success"), t("in_folder_success"))
         # DO NOT open Explorer again! Folder is already open in user's window.
         self.destroy()
 
     def _on_fail(self, msg: str):
+        if not self.winfo_exists():
+            return
         self.is_busy = False
         self.btn_unlock.configure(state="normal", text=t("in_folder_unlock_btn"))
         self.lbl_status.configure(text="")
@@ -234,6 +246,7 @@ class FolderLockApp(ctk.CTk):
         self.minsize(460, 620)
 
         self._set_icon()
+        self.protocol("WM_DELETE_WINDOW", self._on_closing)
 
         # State Variables
         self.selected_folder_to_lock: Optional[str] = None
@@ -1203,16 +1216,18 @@ class FolderLockApp(ctk.CTk):
                         mode="aes256"
                     )
 
-                self.after(0, lambda: self._on_lock_finished_success(locked_path))
+                self.after(0, lambda lp=locked_path: self._on_lock_finished_success(lp))
 
             except OperationCancelledError:
                 self.after(0, self._on_cancelled)
             except Exception as e:
-                self.after(0, lambda: self._on_operation_error(str(e)))
+                self.after(0, lambda err=str(e): self._on_operation_error(err))
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_lock_finished_success(self, locked_path: str):
+        if not self.winfo_exists():
+            return
         self._set_busy(False)
         self.entry_lock_pwd.delete(0, "end")
         self.entry_lock_confirm.delete(0, "end")
@@ -1274,7 +1289,7 @@ class FolderLockApp(ctk.CTk):
                         cancel_check=cancel_chk
                     )
 
-                self.after(0, lambda: self._on_unlock_finished_success(unlocked_path))
+                self.after(0, lambda up=unlocked_path: self._on_unlock_finished_success(up))
 
             except InvalidPasswordError:
                 self.after(0, self._on_invalid_password)
@@ -1283,11 +1298,22 @@ class FolderLockApp(ctk.CTk):
             except OperationCancelledError:
                 self.after(0, self._on_cancelled)
             except Exception as e:
-                self.after(0, lambda: self._on_operation_error(str(e)))
+                self.after(0, lambda err=str(e): self._on_operation_error(err))
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _on_closing(self):
+        if self.is_busy:
+            if not messagebox.askyesno(
+                t("dialog_confirm"),
+                "An operation is currently in progress. Exiting may cause incomplete processing. Are you sure you want to exit?"
+            ):
+                return
+        self.destroy()
+
     def _on_unlock_finished_success(self, unlocked_dir: str):
+        if not self.winfo_exists():
+            return
         self._set_busy(False)
         self.entry_unlock_pwd.delete(0, "end")
         self.selected_folder_to_unlock = None
@@ -1299,18 +1325,26 @@ class FolderLockApp(ctk.CTk):
         messagebox.showinfo(t("dialog_success"), f"'{fname}' {t('status_success_unlock')}")
 
     def _on_invalid_password(self):
+        if not self.winfo_exists():
+            return
         self._set_busy(False)
         messagebox.showerror(t("dialog_error"), t("err_wrong_password"))
 
     def _on_corrupted_file(self):
+        if not self.winfo_exists():
+            return
         self._set_busy(False)
         messagebox.showerror(t("dialog_error"), t("err_corrupted"))
 
     def _on_cancelled(self):
+        if not self.winfo_exists():
+            return
         self._set_busy(False)
         messagebox.showinfo(t("dialog_warning"), t("cancelled_msg"))
 
     def _on_operation_error(self, err: str):
+        if not self.winfo_exists():
+            return
         self._set_busy(False)
         messagebox.showerror(t("dialog_error"), err)
 
@@ -1335,6 +1369,8 @@ class FolderLockApp(ctk.CTk):
             self.btn_browse_file.configure(state="normal")
 
     def _update_progress(self, pct: float, msg: str):
+        if not self.winfo_exists():
+            return
         self.progress_bar.set(pct)
         self.status_lbl.configure(text=f"{int(pct * 100)}% - {msg}")
 
@@ -1384,12 +1420,13 @@ def main():
     # Quick check for help
     if any(arg in ["--help", "-h", "/?", "-help"] for arg in args):
         help_text = (
-            "FolderLock v1.0.2 - Smart Folder Protection\n\n"
+            "FolderLock v1.0.3 - Smart Folder Protection\n\n"
             "Usage:\n"
             "  FolderLock.exe [options] [folder_path]\n\n"
             "Options:\n"
             "  --unlock <path>     Unlock the specified locked folder\n"
             "  --lock <path>       Lock the specified folder\n"
+            "  --mode <mode>       Lock mode: 'crypto' (AES-256-GCM) or 'instant' (NTFS)\n"
             "  --relock <path>     Re-lock folder using saved credentials\n"
             "  --recover <path>    Recover files from an interrupted Instant Lock folder (password required)\n"
             "  --password, -p <pw> Optional password for CLI actions\n"
@@ -1404,12 +1441,13 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(
         prog="FolderLock",
-        description="FolderLock v1.0.2 - Smart Folder Protection",
+        description="FolderLock v1.0.3 - Smart Folder Protection",
         add_help=False
     )
     parser.add_argument("--quiet", "-q", action="store_true", dest="quiet")
     parser.add_argument("--unlock", type=str, dest="unlock", default=None, metavar="PATH")
     parser.add_argument("--lock", type=str, dest="lock", default=None, metavar="PATH")
+    parser.add_argument("--mode", type=str, dest="mode", default="crypto", choices=["crypto", "instant", "aes256"])
     parser.add_argument("--relock", type=str, dest="relock", default=None, metavar="PATH")
     parser.add_argument("--recover", type=str, dest="recover", default=None, metavar="PATH")
     parser.add_argument("--password", "-p", type=str, dest="password", default=None)
@@ -1419,36 +1457,40 @@ def main():
     parsed_args, unknown = parser.parse_known_args(args)
     is_quiet = parsed_args.quiet
 
+    def get_cli_password(prompt_text: str) -> Optional[str]:
+        if parsed_args.password_stdin:
+            try:
+                line = sys.stdin.readline()
+                return line.rstrip('\r\n') if line else None
+            except Exception:
+                return None
+        if parsed_args.password is not None:
+            return parsed_args.password
+        if is_quiet:
+            return None
+        try:
+            import getpass
+            if sys.stdin.isatty():
+                return getpass.getpass(prompt_text)
+            else:
+                root = tk.Tk()
+                root.withdraw()
+                dialog = ModernPasswordDialog(root, t("in_folder_title"), t("unlock_password_placeholder"))
+                res = dialog.get_input()
+                root.destroy()
+                return res
+        except Exception:
+            return None
+
     # Recover command
     if parsed_args.recover:
         target = os.path.abspath(parsed_args.recover)
-        pwd = parsed_args.password
-        if parsed_args.password_stdin:
-            try:
-                pwd = sys.stdin.readline().rstrip('\r\n')
-            except Exception:
-                pwd = None
-
+        pwd = get_cli_password("Enter password for Instant Lock recovery: ")
         if not pwd:
             if is_quiet:
                 print("[ERROR] Password is required for recovery.")
-                sys.exit(1)
             else:
-                try:
-                    import getpass
-                    if sys.stdin.isatty():
-                        pwd = getpass.getpass("Enter password for Instant Lock recovery: ")
-                    else:
-                        root = tk.Tk()
-                        root.withdraw()
-                        dialog = ModernPasswordDialog(root, t("in_folder_title"), t("unlock_password_placeholder"))
-                        pwd = dialog.get_input()
-                        root.destroy()
-                except Exception:
-                    pwd = None
-
-        if not pwd:
-            print("[ERROR] Recovery cancelled: password was not provided.")
+                _show_quick_dialog(t("dialog_error"), "Password was not provided.", is_error=True)
             sys.exit(1)
 
         success, msg = recover_instant_folder(target, password=pwd)
@@ -1489,27 +1531,79 @@ def main():
     # Unlock command
     if parsed_args.unlock:
         target = os.path.abspath(parsed_args.unlock)
-        if is_folder_locked(target):
-            app = InFolderUnlockApp(target)
-            app.mainloop()
-            return
+        if parsed_args.password or parsed_args.password_stdin or is_quiet:
+            pwd = get_cli_password("Enter password to unlock: ")
+            if not pwd:
+                if is_quiet:
+                    print("[ERROR] Password is required to unlock.")
+                else:
+                    _show_quick_dialog(t("dialog_error"), "Password was not provided.", is_error=True)
+                sys.exit(1)
+            try:
+                mode = is_folder_locked(target)
+                if mode == "instant":
+                    unlock_folder_instant(target, pwd)
+                else:
+                    unlock_folder(target, pwd)
+                if is_quiet:
+                    print("[SUCCESS] Folder unlocked.")
+                else:
+                    _show_quick_dialog(t("dialog_success"), t("status_success_unlock"))
+                sys.exit(0)
+            except Exception as e:
+                if is_quiet:
+                    print(f"[ERROR] {e}")
+                else:
+                    _show_quick_dialog(t("dialog_error"), str(e), is_error=True)
+                sys.exit(1)
         else:
-            app = FolderLockApp(config_mgr=cfg)
-            if os.path.isdir(target):
-                app._set_folder_for_unlocking(target)
-            app.tabview.set("tab_unlock")
-            app.mainloop()
-            return
+            if is_folder_locked(target):
+                app = InFolderUnlockApp(target)
+                app.mainloop()
+                return
+            else:
+                app = FolderLockApp(config_mgr=cfg)
+                if os.path.isdir(target):
+                    app._set_folder_for_unlocking(target)
+                app.tabview.set("tab_unlock")
+                app.mainloop()
+                return
 
     # Lock command
     if parsed_args.lock:
         target = os.path.abspath(parsed_args.lock)
-        app = FolderLockApp(config_mgr=cfg)
-        if os.path.isdir(target):
-            app._set_folder_for_locking(target)
-        app.tabview.set("tab_lock")
-        app.mainloop()
-        return
+        if parsed_args.password or parsed_args.password_stdin or is_quiet:
+            pwd = get_cli_password("Enter password to lock: ")
+            if not pwd:
+                if is_quiet:
+                    print("[ERROR] Password is required to lock.")
+                else:
+                    _show_quick_dialog(t("dialog_error"), "Password was not provided.", is_error=True)
+                sys.exit(1)
+            try:
+                lock_mode = parsed_args.mode
+                if lock_mode == "instant":
+                    lock_folder_instant(target, pwd)
+                else:
+                    lock_folder(target, pwd)
+                if is_quiet:
+                    print("[SUCCESS] Folder locked.")
+                else:
+                    _show_quick_dialog(t("dialog_success"), t("status_success_lock"))
+                sys.exit(0)
+            except Exception as e:
+                if is_quiet:
+                    print(f"[ERROR] {e}")
+                else:
+                    _show_quick_dialog(t("dialog_error"), str(e), is_error=True)
+                sys.exit(1)
+        else:
+            app = FolderLockApp(config_mgr=cfg)
+            if os.path.isdir(target):
+                app._set_folder_for_locking(target)
+            app.tabview.set("tab_lock")
+            app.mainloop()
+            return
 
     # Direct path argument (e.g. from Explorer right-click "%1" or drag-and-drop onto exe)
     target_path = parsed_args.target_path
