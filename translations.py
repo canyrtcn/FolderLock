@@ -10,7 +10,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # App Info
         "app_title": "FolderLock",
         "app_subtitle": "Smart Folder Protection",
-        "version": "1.0",
+        "version": "1.0.1",
 
         # Tabs
         "tab_lock": "Lock Folder",
@@ -102,10 +102,17 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "setting_lang": "Language:",
         "setting_theme": "Theme:",
         "setting_developer": "Developer:",
+        "setting_shell_integration": "Explorer Context Menu:",
+        "shell_status_enabled": "Enabled",
+        "shell_status_disabled": "Disabled",
+        "btn_shell_enable": "Enable",
+        "btn_shell_disable": "Remove",
+        "shell_success_enabled": "Windows Explorer context menu added successfully.",
+        "shell_success_disabled": "Windows Explorer context menu removed successfully.",
         "theme_dark": "Dark",
         "theme_light": "Light",
         "security_note_title": "Locking Modes Explained",
-        "security_note_text": "• Instant Lock (SSD Safe): Restricts access without rewriting the protected file contents. It is fast and suitable for large folders, but it is not encryption.\n• Deep AES-256: Authenticated AES-256-GCM encryption for data that requires confidentiality and integrity.",
+        "security_note_text": "• Instant Lock (SSD Safe): Restricts folder access using NTFS Access Control (ACL) without rewriting file contents. Fast and lightweight, but note that it is file system permission control, not cryptographic encryption.\n• Deep AES-256: Authenticated AES-256-GCM encryption with PBKDF2-HMAC-SHA256. Fully rewrites and encrypts file contents for confidential data.",
 
         # Direct In-Folder Unlock Dialog
         "in_folder_title": "Locked Folder",
@@ -119,9 +126,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "help_sec1_title": "1. How to Lock a Folder",
         "help_sec1_body": "• Click 'Browse Folder' or drag & drop any folder into the app.\n• Choose 'Instant Lock' (fast NTFS access control) or 'Deep AES-256' (AES-256-GCM authenticated encryption).\n• Enter a password and click 'Lock Folder'.",
         "help_sec2_title": "2. How to Unlock",
-        "help_sec2_body": "• In-Folder: Open the folder and double-click 'Unlock.exe' (or 'Kilidi Ac.exe'). Enter your password — files are restored instantly!\n• In-App: Go to 'Unlock Folder' or 'Locked Vault' tab and click Unlock.",
+        "help_sec2_body": "• In-App: Open FolderLock, go to 'Unlock Folder' (or drag & drop the folder into the app window), enter your password to restore files.\n• Explorer Context Menu: If enabled in Settings, right-click any locked folder and select 'FolderLock - Lock / Unlock'.\n• Locked Vault: You can also unlock directly from the 'Locked Vault' tab.",
         "help_sec3_title": "3. 1-Click Instant Re-Locking",
-        "help_sec3_body": "• When unlocked, 'Lock.exe' ('Kilitle.exe') remains inside your folder.\n• Simply double-click 'Lock.exe' to instantly re-lock the folder with the SAME password without retyping anything!\n• Or click 'Lock' in the 'Locked Vault' tab.",
+        "help_sec3_body": "• In the 'Locked Vault' tab, unlocked folders can be instantly re-locked with the SAME password without retyping!\n• No dangerous helper executables are dropped into your folders, keeping your system safe and antivirus-friendly.",
         "help_sec4_title": "4. Performance & Portability",
         "help_sec4_body": "• No background service is required after the application is closed.\n• Portable use is supported on compatible Windows drives and removable storage, subject to filesystem permissions and device behavior.",
         "help_close_btn": "Got It",
@@ -131,7 +138,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # App Info
         "app_title": "FolderLock",
         "app_subtitle": "Akıllı Klasör Kilitleyici",
-        "version": "1.0",
+        "version": "1.0.1",
 
         # Tabs
         "tab_lock": "Klasör Kilitle",
@@ -223,10 +230,17 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "setting_lang": "Dil (Language):",
         "setting_theme": "Tema:",
         "setting_developer": "Geliştirici:",
+        "setting_shell_integration": "Gezgin Sağ Tık Menüsü:",
+        "shell_status_enabled": "Etkin",
+        "shell_status_disabled": "Devre Dışı",
+        "btn_shell_enable": "Etkinleştir",
+        "btn_shell_disable": "Kaldır",
+        "shell_success_enabled": "Windows Gezgini sağ tık menüsü başarıyla eklendi.",
+        "shell_success_disabled": "Windows Gezgini sağ tık menüsü başarıyla kaldırıldı.",
         "theme_dark": "Koyu",
         "theme_light": "Açık",
         "security_note_title": "Kilitleme Modları Hakkında",
-        "security_note_text": "• Hızlı Kilit (SSD Dostu): Korunan dosya içeriklerini yeniden yazmadan erişimi kısıtlar. Hızlıdır ve büyük klasörler için uygundur; ancak şifreleme değildir.\n• Tam AES-256: Gizlilik ve bütünlük gerektiren veriler için AES-256-GCM doğrulamalı şifreleme uygular.",
+        "security_note_text": "• Hızlı Kilit (SSD Dostu): Dosya içeriklerini diske yeniden yazmadan NTFS Erişim Denetimi (ACL) ile erişimi engeller. Hızlı ve hafiftir; ancak şifreleme değil dosya sistemi izin kontrolüdür.\n• Tam AES-256: PBKDF2-HMAC-SHA256 ile doğrulamalı AES-256-GCM şifreleme uygular. Gizli ve hassas veriler için dosya içeriklerini bayt bayt tam olarak şifreler.",
 
         # Direct In-Folder Unlock Dialog
         "in_folder_title": "Kilitli Klasör",
@@ -240,9 +254,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "help_sec1_title": "1. Klasör Nasıl Kilitlenir?",
         "help_sec1_body": "• 'Klasör Seç' düğmesine basarak veya klasörü sürükleyip bırakarak seçin.\n• 'Hızlı Kilit' (hızlı NTFS erişim kontrolü) veya 'Tam AES-256' (AES-256-GCM doğrulamalı şifreleme) modunu seçin.\n• Şifrenizi belirleyin ve 'Klasörü Kilitle' düğmesine tıklayın.",
         "help_sec2_title": "2. Kilit Nasıl Açılır?",
-        "help_sec2_body": "• Klasörün İçinden: Kilitli klasöre girip içindeki 'Unlock.exe' veya 'Kilidi Ac.exe'ye çift tıklayın, şifrenizi girin — dosyalarınız anında açılır!\n• Uygulamadan: 'Kilit Aç' veya 'Kilitli Kasam' sekmesine gelerek de kilidi açabilirsiniz.",
+        "help_sec2_body": "• Uygulamadan: FolderLock uygulamasını açın, 'Kilit Aç' sekmesine gelin (veya klasörü pencereye sürükleyip bırakın), şifrenizi girerek dosyaları geri yükleyin.\n• Gezgin Sağ Tık Menüsü: Ayarlar'dan etkinleştirdiyseniz, kilitli klasöre sağ tıklayıp 'FolderLock - Lock / Unlock' seçeneğini kullanabilirsiniz.\n• Kilitli Kasam: Kasadaki listeden de tek tıkla kilidi açabilirsiniz.",
         "help_sec3_title": "3. Tek Tıkla Yeniden Kilitleme",
-        "help_sec3_body": "• Kilit açıldığında klasör içinde 'Lock.exe' ('Kilitle.exe') bekler.\n• Klasörü tekrar aynı şifreyle kilitlemek için 'Lock.exe'ye çift tıklamanız yeterlidir (şifre yazmanız gerekmez)!\n• Ayrıca 'Kilitli Kasam' sekmesindeki 'Kilitle' düğmesine basarak da kilitleyebilirsiniz.",
+        "help_sec3_body": "• 'Kilitli Kasam' sekmesinde açılmış klasörleri şifreyi tekrar yazmadan AYNI şifreyle anında yeniden kilitleyebilirsiniz!\n• Klasörlerinizin içine şüpheli yardımcı çalıştırılabilir dosyalar (EXE) kopyalanmaz, sisteminiz ve antivirüslerinizle tam uyumludur.",
         "help_sec4_title": "4. Performans ve Taşınabilirlik",
         "help_sec4_body": "• Uygulama kapatıldığında arka planda servis çalıştırması gerekmez.\n• Uyumlu Windows sürücülerinde ve çıkarılabilir depolamada taşınabilir kullanım desteklenir; davranış dosya sistemi izinlerine ve cihaza bağlıdır.",
         "help_close_btn": "Anladım",

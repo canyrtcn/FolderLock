@@ -26,6 +26,7 @@ from crypto_engine import (
     InvalidPasswordError,
     CorruptedFileError,
     OperationCancelledError,
+    recover_instant_folder,
     VAULT_FILENAME,
     INSTANT_DATA_DIRNAME,
     UNLOCKER_FILENAME,
@@ -37,7 +38,7 @@ from translations import t, set_current_lang, get_current_lang
 from config_manager import ConfigManager
 from ui_dialogs import ModernPasswordDialog, HelpDialog
 from ui_icons import get_theme_image, get_eye_image
-from shell_integration import setup_shell_integration
+from shell_integration import setup_shell_integration, remove_shell_integration, is_shell_integration_enabled
 
 
 class InFolderUnlockApp(ctk.CTk):
@@ -205,14 +206,6 @@ class InFolderUnlockApp(ctk.CTk):
         self.withdraw()
         messagebox.showinfo(t("dialog_success"), t("in_folder_success"))
         # DO NOT open Explorer again! Folder is already open in user's window.
-
-        # If running as the unlocker inside this folder, self-delete so Lock.exe remains
-        exe_path = os.path.abspath(sys.argv[0])
-        exe_parent = os.path.dirname(exe_path)
-        if os.path.normpath(exe_parent).lower() == os.path.normpath(self.folder_dir).lower():
-            if getattr(sys, 'frozen', False):
-                cmd = f'cmd /c ping 127.0.0.1 -n 2 > nul & del /f /q "{exe_path}"'
-                subprocess.Popen(cmd, shell=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
         self.destroy()
 
     def _on_fail(self, msg: str):
@@ -227,10 +220,10 @@ class FolderLockApp(ctk.CTk):
     Main FolderLock Desktop Application.
     Clean, elegant Windows 11 Fluent dark layout.
     """
-    def __init__(self):
+    def __init__(self, config_mgr: Optional[ConfigManager] = None):
         super().__init__()
 
-        self.config_mgr = ConfigManager()
+        self.config_mgr = config_mgr or ConfigManager()
         set_current_lang(self.config_mgr.language)
 
         ctk.set_appearance_mode(self.config_mgr.theme)
@@ -266,7 +259,7 @@ class FolderLockApp(ctk.CTk):
     def _check_cli_args(self):
         if len(sys.argv) > 1:
             target = sys.argv[1]
-            if os.path.isdir(target):
+            if not target.startswith("-") and not target.startswith("/") and os.path.isdir(target):
                 if is_folder_locked(target):
                     self._set_folder_for_unlocking(os.path.abspath(target))
                     self.tabview.set("tab_unlock")
@@ -690,7 +683,7 @@ class FolderLockApp(ctk.CTk):
 
         # Developer / GitHub Profile row
         row_dev = ctk.CTkFrame(card_opts, fg_color="transparent")
-        row_dev.pack(fill="x", padx=12, pady=(4, 12))
+        row_dev.pack(fill="x", padx=12, pady=(4, 6))
 
         self.lbl_s_dev = ctk.CTkLabel(row_dev, text=t("setting_developer"), font=ctk.CTkFont(size=12))
         self.lbl_s_dev.pack(side="left")
@@ -706,6 +699,25 @@ class FolderLockApp(ctk.CTk):
         self.lbl_s_dev_val.bind("<Button-1>", lambda e: self._open_github_profile())
         self.lbl_s_dev_val.bind("<Enter>", lambda e: self.lbl_s_dev_val.configure(text_color=("#0369a1", "#7dd3fc")))
         self.lbl_s_dev_val.bind("<Leave>", lambda e: self.lbl_s_dev_val.configure(text_color=("#0284c7", "#38bdf8")))
+
+        # Windows Explorer Context Menu row
+        row_shell = ctk.CTkFrame(card_opts, fg_color="transparent")
+        row_shell.pack(fill="x", padx=12, pady=(4, 12))
+
+        self.lbl_s_shell = ctk.CTkLabel(row_shell, text=t("setting_shell_integration"), font=ctk.CTkFont(size=12))
+        self.lbl_s_shell.pack(side="left")
+
+        is_sh = is_shell_integration_enabled()
+        self.btn_shell_toggle = ctk.CTkButton(
+            row_shell,
+            text=t("btn_shell_disable") if is_sh else t("btn_shell_enable"),
+            fg_color="#dc2626" if is_sh else ("#0284c7", "#0369a1"),
+            hover_color="#b91c1c" if is_sh else ("#0369a1", "#0284c7"),
+            height=28,
+            width=110,
+            command=self._on_shell_toggle_click
+        )
+        self.btn_shell_toggle.pack(side="right")
 
         # Security Info
         card_sec = ctk.CTkFrame(container, corner_radius=8)
@@ -770,6 +782,27 @@ class FolderLockApp(ctk.CTk):
             except Exception:
                 pass
 
+    def _on_shell_toggle_click(self):
+        try:
+            if is_shell_integration_enabled():
+                remove_shell_integration()
+                messagebox.showinfo(t("dialog_success"), t("shell_success_disabled"))
+            else:
+                setup_shell_integration()
+                messagebox.showinfo(t("dialog_success"), t("shell_success_enabled"))
+        except Exception as e:
+            messagebox.showerror(t("dialog_error"), str(e))
+        self._refresh_shell_button()
+
+    def _refresh_shell_button(self):
+        if hasattr(self, 'btn_shell_toggle'):
+            is_sh = is_shell_integration_enabled()
+            self.btn_shell_toggle.configure(
+                text=t("btn_shell_disable") if is_sh else t("btn_shell_enable"),
+                fg_color="#dc2626" if is_sh else ("#0284c7", "#0369a1"),
+                hover_color="#b91c1c" if is_sh else ("#0369a1", "#0284c7")
+            )
+
     def _refresh_all_texts(self):
         self.title(f"{t('app_title')} - {t('app_subtitle')}")
         self.subtitle_lbl.configure(text=t("app_subtitle"))
@@ -825,6 +858,9 @@ class FolderLockApp(ctk.CTk):
             self.btn_open_help.configure(text=t("help_btn_tooltip"))
         if hasattr(self, 'lbl_s_dev'):
             self.lbl_s_dev.configure(text=t("setting_developer"))
+        if hasattr(self, 'lbl_s_shell'):
+            self.lbl_s_shell.configure(text=t("setting_shell_integration"))
+        self._refresh_shell_button()
         self.lbl_sec_t.configure(text=t("security_note_title"))
         self.lbl_sec_b.configure(text=t("security_note_text"))
 
@@ -1302,6 +1338,9 @@ class FolderLockApp(ctk.CTk):
 
 
 def _show_quick_dialog(title: str, msg: str, is_error: bool = False):
+    print(f"[{title}] {msg}")
+    if any(arg in sys.argv for arg in ["--quiet", "-q"]):
+        return
     try:
         root = tk.Tk()
         root.withdraw()
@@ -1319,65 +1358,145 @@ def _show_quick_dialog(title: str, msg: str, is_error: bool = False):
 
 
 def main():
+    if len(sys.argv) > 1 and os.name == 'nt':
+        try:
+            import ctypes
+            ctypes.windll.kernel32.AttachConsole(-1)
+        except Exception:
+            pass
+
     try:
         cfg = ConfigManager()
         set_current_lang(cfg.language)
     except Exception:
-        pass
+        cfg = None
 
-    try:
-        setup_shell_integration()
-    except Exception:
-        pass
-
+    args = sys.argv[1:]
     exe_name = os.path.basename(sys.argv[0]).lower()
     exe_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
 
-    # 1. Fast Re-Lock: If user clicked Lock.exe / Kilitle.exe or inside unlocked folder with saved config
-    if exe_name in ["lock.exe", "kilitle.exe"] or (len(sys.argv) == 1 and get_relock_config(exe_dir) and not is_folder_locked(exe_dir)):
+    # Quick check for help
+    if any(arg in ["--help", "-h", "/?", "-help"] for arg in args):
+        help_text = (
+            "FolderLock v1.0.1 - Smart Folder Protection\n\n"
+            "Usage:\n"
+            "  FolderLock.exe [options] [folder_path]\n\n"
+            "Options:\n"
+            "  --unlock <path>     Unlock the specified locked folder\n"
+            "  --lock <path>       Lock the specified folder\n"
+            "  --relock <path>     Re-lock folder using saved credentials\n"
+            "  --recover <path>    Recover files from an interrupted Instant Lock folder\n"
+            "  --password, -p <pw> Optional password for CLI actions\n"
+            "  --quiet, -q         Suppress message dialogs (exit code 0 on success, 1 on error)\n"
+            "  --help, -h, /?      Show this help message\n"
+        )
+        print(help_text)
+        sys.exit(0)
+
+    # 1. Parse arguments robustly using argparse
+    import argparse
+    parser = argparse.ArgumentParser(
+        prog="FolderLock",
+        description="FolderLock v1.0.1 - Smart Folder Protection",
+        add_help=False
+    )
+    parser.add_argument("--quiet", "-q", action="store_true", dest="quiet")
+    parser.add_argument("--unlock", type=str, dest="unlock", default=None, metavar="PATH")
+    parser.add_argument("--lock", type=str, dest="lock", default=None, metavar="PATH")
+    parser.add_argument("--relock", type=str, dest="relock", default=None, metavar="PATH")
+    parser.add_argument("--recover", type=str, dest="recover", default=None, metavar="PATH")
+    parser.add_argument("--password", "-p", type=str, dest="password", default=None)
+    parser.add_argument("target_path", nargs="?", default=None)
+
+    parsed_args, unknown = parser.parse_known_args(args)
+    is_quiet = parsed_args.quiet
+
+    # Recover command
+    if parsed_args.recover:
+        target = os.path.abspath(parsed_args.recover)
+        success, msg = recover_instant_folder(target, password=parsed_args.password)
+        if is_quiet:
+            print(f"[{'SUCCESS' if success else 'ERROR'}] {msg}")
+            sys.exit(0 if success else 1)
+        else:
+            _show_quick_dialog(t("dialog_success") if success else t("dialog_error"), msg, is_error=not success)
+            sys.exit(0 if success else 1)
+
+    # Relock command
+    if parsed_args.relock:
+        target = os.path.abspath(parsed_args.relock)
+        if not get_relock_config(target):
+            err_msg = "No re-lock configuration found for this folder."
+            if is_quiet:
+                print(f"[ERROR] {err_msg}")
+                sys.exit(1)
+            else:
+                _show_quick_dialog(t("dialog_error"), err_msg, is_error=True)
+                sys.exit(1)
         try:
-            relock_folder(exe_dir)
-            if getattr(sys, 'frozen', False):
-                cmd = f'cmd /c ping 127.0.0.1 -n 2 > nul & del /f /q "{os.path.abspath(sys.argv[0])}"'
-                subprocess.Popen(cmd, shell=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-            _show_quick_dialog(t("dialog_success"), t("status_success_lock"))
-            return
-        except InvalidPasswordError:
-            dialog = ModernPasswordDialog(None, t("quick_lock_dialog_title"), t("quick_lock_prompt", name=os.path.basename(exe_dir)), btn_text=t("btn_quick_lock"))
-            pwd = dialog.get_input()
-            if pwd and len(pwd) >= 4:
-                try:
-                    lock_folder(exe_dir, password=pwd)
-                    if getattr(sys, 'frozen', False):
-                        cmd = f'cmd /c ping 127.0.0.1 -n 2 > nul & del /f /q "{os.path.abspath(sys.argv[0])}"'
-                        subprocess.Popen(cmd, shell=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-                    _show_quick_dialog(t("dialog_success"), t("status_success_lock"))
-                    return
-                except Exception as e:
-                    _show_quick_dialog(t("dialog_error"), str(e), is_error=True)
-                    return
-            return
+            relock_folder(target)
+            if is_quiet:
+                print("[SUCCESS] Folder locked.")
+                sys.exit(0)
+            else:
+                _show_quick_dialog(t("dialog_success"), t("status_success_lock"))
+                sys.exit(0)
         except Exception as e:
-            _show_quick_dialog(t("dialog_error"), str(e), is_error=True)
+            if is_quiet:
+                print(f"[ERROR] {e}")
+                sys.exit(1)
+            else:
+                _show_quick_dialog(t("dialog_error"), str(e), is_error=True)
+                sys.exit(1)
+
+    # Unlock command
+    if parsed_args.unlock:
+        target = os.path.abspath(parsed_args.unlock)
+        if is_folder_locked(target):
+            app = InFolderUnlockApp(target)
+            app.mainloop()
+            return
+        else:
+            app = FolderLockApp(config_mgr=cfg)
+            if os.path.isdir(target):
+                app._set_folder_for_unlocking(target)
+            app.tabview.set("tab_unlock")
+            app.mainloop()
             return
 
-    # 2. CLI target check (Explorer context menu, drag & drop, file association)
-    if len(sys.argv) > 1:
-        target = os.path.abspath(sys.argv[1])
+    # Lock command
+    if parsed_args.lock:
+        target = os.path.abspath(parsed_args.lock)
+        app = FolderLockApp(config_mgr=cfg)
+        if os.path.isdir(target):
+            app._set_folder_for_locking(target)
+        app.tabview.set("tab_lock")
+        app.mainloop()
+        return
+
+    # Direct path argument (e.g. from Explorer right-click "%1" or drag-and-drop onto exe)
+    target_path = parsed_args.target_path
+    if not target_path and unknown:
+        for u in unknown:
+            if not u.startswith("-") and not u.startswith("/") and os.path.exists(u):
+                target_path = u
+                break
+
+    if target_path:
+        target = os.path.abspath(target_path)
         if os.path.isdir(target):
             if is_folder_locked(target):
                 app = InFolderUnlockApp(target)
                 app.mainloop()
                 return
             elif get_relock_config(target):
-                try:
-                    relock_folder(target)
-                    _show_quick_dialog(t("dialog_success"), t("status_success_lock"))
-                except Exception as e:
-                    _show_quick_dialog(t("dialog_error"), str(e), is_error=True)
+                app = FolderLockApp(config_mgr=cfg)
+                app._set_folder_for_locking(target)
+                app.tabview.set("tab_vault")
+                app.mainloop()
                 return
             else:
-                app = FolderLockApp()
+                app = FolderLockApp(config_mgr=cfg)
                 app._set_folder_for_locking(target)
                 app.tabview.set("tab_lock")
                 app.mainloop()
@@ -1389,14 +1508,22 @@ def main():
                 app.mainloop()
                 return
 
-    # 3. Running as Unlock.exe / Kilidi Ac.exe inside a locked folder
+    # 2. Legacy helper executable compatibility (v1.0.0 legacy Unlock.exe / Lock.exe)
+    if exe_name in ["lock.exe", "kilitle.exe"] and get_relock_config(exe_dir):
+        try:
+            relock_folder(exe_dir)
+            _show_quick_dialog(t("dialog_success"), t("status_success_lock"))
+        except Exception as e:
+            _show_quick_dialog(t("dialog_error"), str(e), is_error=True)
+        return
+
     if is_folder_locked(exe_dir) or exe_name in ["unlock.exe", "kilidi ac.exe"]:
         app = InFolderUnlockApp(exe_dir)
         app.mainloop()
         return
 
-    # 4. Default app launch
-    app = FolderLockApp()
+    # 3. Default app launch
+    app = FolderLockApp(config_mgr=cfg)
     app.mainloop()
 
 

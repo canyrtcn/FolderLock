@@ -8,6 +8,7 @@ Fully portable across Windows editions and environments (zero machine-specific r
 import os
 import sys
 import stat
+import time
 import struct
 import shutil
 import tarfile
@@ -50,7 +51,9 @@ EXCLUDED_NAMES = {
     LOCKER_FILENAME,
     LOCKER_TR_FILENAME,
     README_FILENAME,
+    "How_To_Unlock.txt",
     "Kilidi Ac.exe",
+    "Kilitle.exe",
     "🔓 KİLİDİ AÇ.exe"
 }
 
@@ -58,27 +61,35 @@ WIN_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
 README_LOCKED_TEXT = (
     "====================================================\n"
-    "FOLDERLOCK - PROTECTED DIRECTORY / KORUMALI KLASÖR\n"
+    "FOLDERLOCK - PROTECTED DIRECTORY / KORUMALI KLASOR\n"
     "====================================================\n\n"
     "[EN] TO UNLOCK THIS FOLDER:\n"
-    "Double-click 'Unlock.exe' and enter your password.\n"
-    "Your files will be restored instantly.\n\n"
-    "[TR] BU KLASÖRÜN KİLİDİNİ AÇMAK İÇİN:\n"
-    "Klasör içindeki 'Unlock.exe' dosyasına çift tıklayın ve şifrenizi girin.\n"
-    "Dosyalarınız anında geri yüklenecektir.\n"
+    "1. Open the FolderLock application.\n"
+    "2. Drag and drop this folder into FolderLock (or select it in 'Unlock Folder').\n"
+    "3. Alternatively, right-click this folder and choose 'FolderLock - Lock / Unlock'.\n"
+    "4. Enter your password to restore your files.\n\n"
+    "[TR] BU KLASORUN KILIDINI ACMAK ICIN:\n"
+    "1. FolderLock uygulamasini acin.\n"
+    "2. Bu klasoru FolderLock penceresine surukleyin (veya 'Kilit Ac' sekmesinden secin).\n"
+    "3. Alternatif olarak, klasore sag tiklayip 'FolderLock - Lock / Unlock' secenegini secin.\n"
+    "4. Sifrenizi girerek dosyalarinizi aninda geri yukleyin.\n"
     "====================================================\n"
 )
 
 README_UNLOCKED_TEXT = (
     "====================================================\n"
-    "FOLDERLOCK - UNLOCKED DIRECTORY / AÇILMIŞ KLASÖR\n"
+    "FOLDERLOCK - UNLOCKED DIRECTORY / ACILMIS KLASOR\n"
     "====================================================\n\n"
     "[EN] TO RE-LOCK THIS FOLDER:\n"
-    "Double-click 'Lock.exe' to instantly re-lock this folder\n"
-    "with the SAME password without re-typing anything!\n\n"
-    "[TR] BU KLASÖRÜ TEKRAR KİLİTLEMEK İÇİN:\n"
-    "Klasör içindeki 'Lock.exe' dosyasına çift tıklayarak\n"
-    "şifre yazmaya gerek kalmadan AYNI şifreyle anında tekrar kilitleyebilirsiniz!\n"
+    "1. Open FolderLock and navigate to 'Locked Vault'.\n"
+    "2. Click 'Lock' next to this folder to re-lock instantly\n"
+    "   with the SAME password without re-typing!\n"
+    "3. Or select this folder in the 'Lock Folder' tab.\n\n"
+    "[TR] BU KLASORU TEKRAR KILITLEMEK ICIN:\n"
+    "1. FolderLock uygulamasinda 'Kilitli Kasam' sekmesine gidin.\n"
+    "2. Bu klasorun yanindaki 'Kilitle' dugmesine basarak\n"
+    "   sifre yazmadan AYNI sifreyle aninda tekrar kilitleyin!\n"
+    "3. Ya da 'Klasor Kilitle' sekmesinden bu klasoru secin.\n"
     "====================================================\n"
 )
 
@@ -165,6 +176,43 @@ def safe_remove_path(path: str):
             pass
 
 
+def resolve_collision(dest_dir: str, name: str) -> str:
+    """
+    Finds a safe, non-colliding destination path if a file or directory with the same
+    name already exists in dest_dir, preventing accidental overwriting or deletion.
+    """
+    dest_path = os.path.join(dest_dir, name)
+    if not os.path.exists(dest_path):
+        return dest_path
+    base, ext = os.path.splitext(name)
+    counter = 1
+    while True:
+        candidate = f"{base}_restored_{counter}{ext}"
+        candidate_path = os.path.join(dest_dir, candidate)
+        if not os.path.exists(candidate_path):
+            return candidate_path
+        counter += 1
+
+
+def clean_legacy_in_folder_binaries(folder_path: str):
+    """
+    Safely removes legacy helper executables left behind from older versions (v1.0.0),
+    such as Unlock.exe or Lock.exe, using standard file deletion. Never uses child processes.
+    """
+    legacy_names = [
+        UNLOCKER_FILENAME, UNLOCKER_TR_FILENAME, LOCKER_FILENAME, LOCKER_TR_FILENAME,
+        "Kilidi Ac.exe", "Kilitle.exe", "🔓 KİLİDİ AÇ.exe"
+    ]
+    for name in legacy_names:
+        p = os.path.join(folder_path, name)
+        if os.path.isfile(p):
+            try:
+                os.chmod(p, stat.S_IWRITE)
+                os.remove(p)
+            except Exception:
+                pass
+
+
 def derive_key(password: str, salt: bytes) -> bytes:
     """Derives a 256-bit AES key from the password and salt using PBKDF2-HMAC-SHA256."""
     kdf = PBKDF2HMAC(
@@ -203,7 +251,7 @@ def dpapi_unprotect(cipher: bytes) -> bytes:
 
 
 def save_relock_config(folder_path: str, mode: str, salt_hex: str, hash_val: str, password: Optional[str] = None):
-    """Saves hidden credentials inside the unlocked folder so Lock.exe can re-lock with the same password."""
+    """Saves hidden credentials inside the unlocked folder so FolderLock can re-lock with the same password."""
     folder_path = os.path.abspath(folder_path)
     relock_file = os.path.join(folder_path, RELOCK_CONFIG_FILENAME)
     data = {
@@ -247,35 +295,13 @@ def get_relock_config(folder_path: str) -> Optional[Dict[str, Any]]:
 
 
 def deploy_lockers(folder_path: str):
-    """Places Lock.exe in an unlocked folder, removes Unlock.exe and duplicates."""
-    folder_path = os.path.abspath(folder_path)
-    exe_src = _get_app_executable_path()
-    if exe_src and os.path.isfile(exe_src):
-        dst = os.path.join(folder_path, LOCKER_FILENAME)
-        try:
-            if not os.path.exists(dst) or os.path.getsize(dst) != os.path.getsize(exe_src):
-                shutil.copy2(exe_src, dst)
-        except Exception:
-            pass
-    # Clean up unlockers and redundant/legacy copies
-    for u in [UNLOCKER_FILENAME, UNLOCKER_TR_FILENAME, LOCKER_TR_FILENAME, "Kilidi Ac.exe", "Kilitle.exe", "🔓 KİLİDİ AÇ.exe"]:
-        safe_remove_path(os.path.join(folder_path, u))
+    """Deprecated in v1.0.1: Retained for interface backward compatibility as a clean legacy-removal no-op."""
+    clean_legacy_in_folder_binaries(folder_path)
 
 
 def deploy_unlockers(folder_path: str):
-    """Places Unlock.exe in a locked folder, removes Lock.exe and duplicates."""
-    folder_path = os.path.abspath(folder_path)
-    exe_src = _get_app_executable_path()
-    if exe_src and os.path.isfile(exe_src):
-        dst = os.path.join(folder_path, UNLOCKER_FILENAME)
-        try:
-            if not os.path.exists(dst) or os.path.getsize(dst) != os.path.getsize(exe_src):
-                shutil.copy2(exe_src, dst)
-        except Exception:
-            pass
-    # Clean up lockers and redundant/legacy copies
-    for l in [LOCKER_FILENAME, LOCKER_TR_FILENAME, UNLOCKER_TR_FILENAME, "Kilidi Ac.exe", "Kilitle.exe", "🔓 KİLİDİ AÇ.exe"]:
-        safe_remove_path(os.path.join(folder_path, l))
+    """Deprecated in v1.0.1: Retained for interface backward compatibility as a clean legacy-removal no-op."""
+    clean_legacy_in_folder_binaries(folder_path)
 
 
 def is_folder_locked(folder_path: str) -> Optional[str]:
@@ -297,12 +323,12 @@ def lock_folder_instant(folder_path: str, password: Optional[str] = None,
                         hash_val: Optional[str] = None,
                         progress_callback: Optional[Callable[[float, str], None]] = None) -> Tuple[str, str]:
     """
-    Instant Lock (No Protected-File Content Rewrites):
+    Instant Lock (NTFS Access Control - SSD Safe):
     - Moves folder contents into a hidden container `.locked_data` inside `folder_path`.
     - Writes `.flock_meta` inside `.locked_data` with PBKDF2 salt & verification hash.
-    - Sets system/hidden attributes and NTFS Deny ACE on `.locked_data` only.
-    - Copies Unlock.exe, Kilidi Ac.exe and Readme.txt directly into `folder_path`.
-    - Completes in < 0.05 seconds with 0 file data bytes written to SSD.
+    - Sets system/hidden attributes and NTFS Deny ACE on `.locked_data`.
+    - Transactional: if any step fails, changes are cleanly rolled back.
+    - Zero data loss: never overwrites or deletes existing user files.
     """
     folder_path = os.path.abspath(folder_path)
     if not os.path.isdir(folder_path):
@@ -311,8 +337,27 @@ def lock_folder_instant(folder_path: str, password: Optional[str] = None,
     if is_folder_locked(folder_path):
         raise ValueError("The folder is already locked.")
 
+    locked_data_dir = os.path.join(folder_path, INSTANT_DATA_DIRNAME)
+    if os.path.exists(locked_data_dir):
+        # Inspect whether it contains existing user files before touching
+        try:
+            set_file_attributes(locked_data_dir, hidden=False, system=False)
+            run_icacls([locked_data_dir, "/remove:d", "*S-1-1-0"])
+            existing_items = [i for i in os.listdir(locked_data_dir) if i != META_FILENAME]
+        except Exception:
+            existing_items = ["(unreadable container)"]
+        if existing_items:
+            raise ValueError(
+                "A locked data container (.locked_data) already exists and contains data. "
+                "Please unlock or recover the existing protected items first."
+            )
+        else:
+            try:
+                os.rmdir(locked_data_dir)
+            except Exception:
+                pass
+
     if salt_hex and hash_val:
-        # Re-locking with same credentials
         pwd_hash = hash_val
     elif password:
         salt_bytes = os.urandom(SALT_SIZE)
@@ -323,15 +368,14 @@ def lock_folder_instant(folder_path: str, password: Optional[str] = None,
         raise ValueError("Password cannot be empty.")
 
     items_to_lock = [item for item in os.listdir(folder_path) if item not in EXCLUDED_NAMES]
+    if not items_to_lock:
+        raise ValueError("The folder contains no items to protect.")
 
     if progress_callback:
         progress_callback(0.2, "Preparing security container...")
 
-    locked_data_dir = os.path.join(folder_path, INSTANT_DATA_DIRNAME)
-    safe_remove_path(locked_data_dir)
     os.makedirs(locked_data_dir, exist_ok=True)
 
-    # Save portable verification metadata
     meta_path = os.path.join(locked_data_dir, META_FILENAME)
     meta_data = {
         "magic": "FLCK_INSTANT_V1",
@@ -344,24 +388,58 @@ def lock_folder_instant(folder_path: str, password: Optional[str] = None,
     if progress_callback:
         progress_callback(0.5, "Securing items...")
 
-    # Move items into container without rewriting the protected file contents.
-    for item in items_to_lock:
-        src = os.path.join(folder_path, item)
-        dst = os.path.join(locked_data_dir, item)
-        shutil.move(src, dst)
+    # Transactional file move
+    moved_items = []
+    try:
+        for item in items_to_lock:
+            src = os.path.join(folder_path, item)
+            dst = os.path.join(locked_data_dir, item)
+            shutil.move(src, dst)
+            moved_items.append((src, dst))
+    except Exception as e:
+        # Rollback: restore all moved items back to parent folder
+        for orig_src, moved_dst in reversed(moved_items):
+            try:
+                if os.path.exists(moved_dst):
+                    shutil.move(moved_dst, orig_src)
+            except Exception:
+                pass
+        safe_remove_path(meta_path)
+        try:
+            os.rmdir(locked_data_dir)
+        except Exception:
+            pass
+        raise CryptoError(f"Failed to secure items into container: {e}")
 
     # Set hidden + system on .locked_data via native Win32 API
     set_file_attributes(locked_data_dir, hidden=True, system=True)
 
-    # Universal SID *S-1-1-0 (Everyone) deny on .locked_data ONLY (works on all Windows language editions)
-    run_icacls([locked_data_dir, "/deny", INSTANT_DENY_PERMS])
+    # Universal SID *S-1-1-0 (Everyone) deny on .locked_data ONLY
+    res_deny = run_icacls([locked_data_dir, "/deny", INSTANT_DENY_PERMS])
+    if res_deny.returncode != 0:
+        # Rollback if ACL fails
+        run_icacls([locked_data_dir, "/remove:d", "*S-1-1-0"])
+        set_file_attributes(locked_data_dir, hidden=False, system=False)
+        for orig_src, moved_dst in reversed(moved_items):
+            try:
+                if os.path.exists(moved_dst):
+                    shutil.move(moved_dst, orig_src)
+            except Exception:
+                pass
+        safe_remove_path(meta_path)
+        try:
+            os.rmdir(locked_data_dir)
+        except Exception:
+            pass
+        raise CryptoError("Failed to apply NTFS access control permissions.")
 
     if progress_callback:
-        progress_callback(0.8, "Deploying unlocker...")
+        progress_callback(0.8, "Finalizing protection...")
 
-    deploy_unlockers(folder_path)
+    # Clean legacy binaries if any were present from older versions
+    clean_legacy_in_folder_binaries(folder_path)
 
-    # Bilingual Instruction file
+    # Bilingual instruction file
     try:
         readme_path = os.path.join(folder_path, README_FILENAME)
         with open(readme_path, "w", encoding="utf-8") as f:
@@ -379,11 +457,12 @@ def unlock_folder_instant(folder_path: str, password: str,
                           salt_hex: Optional[str] = None,
                           expected_hash_hex: Optional[str] = None) -> bool:
     """
-    Unlocks an Instant-Locked folder in < 0.05s:
+    Unlocks an Instant-Locked folder:
     - Removes deny ACE and hidden attributes from `.locked_data`.
     - Verifies password against `.flock_meta` (or passed arguments).
-    - Moves all protected files and subfolders back to `folder_path`.
-    - Fail-safe: if password check fails or error occurs, deny ACE is guaranteed to be restored.
+    - Moves all protected items back to `folder_path` with safe collision resolution.
+    - Zero data loss: never overwrites or deletes existing destination files.
+    - Fail-safe: if password check fails or error occurs, deny ACE is restored.
     """
     folder_path = os.path.abspath(folder_path)
     locked_data_dir = os.path.join(folder_path, INSTANT_DATA_DIRNAME)
@@ -407,7 +486,6 @@ def unlock_folder_instant(folder_path: str, password: str,
     set_file_attributes(locked_data_dir, hidden=False, system=False)
     res_rm = run_icacls([locked_data_dir, "/remove:d", "*S-1-1-0"])
     if res_rm.returncode != 0:
-        # Fallback for reset if previously locked by an older version
         run_icacls([locked_data_dir, "/reset"])
         run_icacls([locked_data_dir, "/remove:d", "*S-1-1-0"])
 
@@ -441,23 +519,29 @@ def unlock_folder_instant(folder_path: str, password: str,
             set_file_attributes(locked_data_dir, hidden=True, system=True)
             run_icacls([locked_data_dir, "/deny", INSTANT_DENY_PERMS])
 
-    # Password verified! Restore items
-    safe_remove_path(meta_path)
-
+    # Password verified! Restore items safely
     for item in os.listdir(locked_data_dir):
+        if item == META_FILENAME:
+            continue
         src = os.path.join(locked_data_dir, item)
-        dst = os.path.join(folder_path, item)
-        if os.path.exists(dst):
-            safe_remove_path(dst)
+        dst = resolve_collision(folder_path, item)
         shutil.move(src, dst)
 
-    safe_remove_path(locked_data_dir)
+    # Remove metadata only after items are successfully restored
+    safe_remove_path(meta_path)
 
-    # Save re-lock configuration so user can lock again with the same password!
+    # Remove container directory only if empty
+    try:
+        os.rmdir(locked_data_dir)
+    except Exception:
+        pass
+
+    clean_legacy_in_folder_binaries(folder_path)
+
+    # Save re-lock configuration so user can lock again with the same password
     save_relock_config(folder_path, mode="instant", salt_hex=salt_hex, hash_val=expected_hash_hex)
-    deploy_lockers(folder_path)
 
-    # Bilingual instruction file for unlocked state
+    # Instruction file for unlocked state
     try:
         readme_path = os.path.join(folder_path, README_FILENAME)
         with open(readme_path, "w", encoding="utf-8") as f:
@@ -493,7 +577,7 @@ def relock_folder(folder_path: str,
 
     # Remove relock config
     safe_remove_path(os.path.join(folder_path, RELOCK_CONFIG_FILENAME))
-    deploy_unlockers(folder_path)
+    clean_legacy_in_folder_binaries(folder_path)
     return True
 
 
@@ -701,20 +785,70 @@ def verify_file_password(vault_path: str, password: str) -> bool:
         raise InvalidPasswordError("Incorrect password.")
 
 
-def _get_app_executable_path() -> Optional[str]:
-    """Finds FolderLock.exe to copy into locked folders as the unlocker."""
-    if getattr(sys, 'frozen', False):
-        return sys.executable
+def verify_vault_integrity(vault_path: str, password: str) -> bool:
+    """
+    Verifies the complete integrity of an encrypted AES-256-GCM vault archive:
+    1. Verifies the header verifier token with AES-GCM.
+    2. Streams and decrypts every chunk through ChunkDecryptingReader, checking all GCM tags.
+    3. Validates the tar stream end-to-end to ensure archive structure is undamaged.
+    4. Verifies that the archive reaches clean EOF without missing chunks or trailing data.
+    Raises InvalidPasswordError or CorruptedFileError if verification fails.
+    """
+    if not os.path.isfile(vault_path):
+        raise FileNotFoundError(f"Vault not found: {vault_path}")
 
-    candidates = [
-        os.path.abspath("FolderLock.exe"),
-        os.path.abspath(os.path.join(os.path.dirname(__file__), "FolderLock.exe")),
-        os.path.abspath(os.path.join(os.path.dirname(__file__), "dist", "FolderLock.exe"))
-    ]
-    for c in candidates:
-        if os.path.isfile(c):
-            return c
-    return None
+    with open(vault_path, "rb") as f_in:
+        magic = f_in.read(len(MAGIC_HEADER))
+        if magic != MAGIC_HEADER:
+            raise CorruptedFileError("The selected file is not a valid FolderLock vault.")
+
+        salt = f_in.read(SALT_SIZE)
+        if len(salt) != SALT_SIZE:
+            raise CorruptedFileError("Damaged vault header (incomplete salt).")
+
+        nonce = f_in.read(NONCE_SIZE)
+        if len(nonce) != NONCE_SIZE:
+            raise CorruptedFileError("Damaged vault header (incomplete nonce).")
+
+        verifier_len_bytes = f_in.read(4)
+        if len(verifier_len_bytes) != 4:
+            raise CorruptedFileError("Damaged vault header.")
+        verifier_len = struct.unpack(">I", verifier_len_bytes)[0]
+
+        verifier_ct = f_in.read(verifier_len)
+        if len(verifier_ct) != verifier_len:
+            raise CorruptedFileError("Damaged vault header.")
+
+        key = derive_key(password, salt)
+        aes = AESGCM(key)
+        try:
+            dec = aes.decrypt(nonce, verifier_ct, None)
+            if dec != VERIFIER_PAYLOAD:
+                raise InvalidPasswordError("Password verification token mismatch.")
+        except InvalidTag:
+            raise InvalidPasswordError("Incorrect password.")
+
+        # Header verified. Now verify the entire encrypted payload stream
+        dec_reader = ChunkDecryptingReader(f_in, key)
+        try:
+            with tarfile.open(mode="r|", fileobj=dec_reader) as tar:
+                for member in tar:
+                    if member.isreg():
+                        f_mem = tar.extractfile(member)
+                        if f_mem:
+                            while f_mem.read(65536):
+                                pass
+        except (tarfile.TarError, InvalidTag, CorruptedFileError) as e:
+            raise CorruptedFileError(f"Vault data stream verification failed: {e}")
+
+        # Ensure reader reached clean EOF flag
+        if not dec_reader.eof:
+            while dec_reader.read(65536):
+                pass
+        if not dec_reader.eof:
+            raise CorruptedFileError("Vault ends prematurely without last chunk marker.")
+
+    return True
 
 
 def lock_folder(folder_path: str, password: str,
@@ -723,8 +857,9 @@ def lock_folder(folder_path: str, password: str,
     """
     In-Place Folder Locking (AES-256-GCM):
     - Encrypts all items inside `folder_path` into `.locked_vault`.
-    - Places `Unlock.exe` directly inside the folder so clicking it prompts for password.
-    - Zero data loss on cancellation or error.
+    - Fully verifies archive integrity (all chunks, authentication tags, and tar structure)
+      BEFORE removing any plaintext files.
+    - Zero data loss: if encryption or verification fails, original files are untouched.
     """
     folder_path = os.path.abspath(folder_path)
     if not os.path.isdir(folder_path):
@@ -737,7 +872,7 @@ def lock_folder(folder_path: str, password: str,
         raise ValueError("Password cannot be empty.")
 
     vault_file = os.path.join(folder_path, VAULT_FILENAME)
-    temp_vault_file = os.path.join(folder_path, VAULT_FILENAME + ".tmp")
+    temp_vault_file = os.path.join(folder_path, f".flock_tmp_{os.getpid()}_{int(time.time())}.tmp")
 
     if progress_callback:
         progress_callback(0.02, "Calculating folder size...")
@@ -751,13 +886,13 @@ def lock_folder(folder_path: str, password: str,
     def on_chunk(bytes_written: int):
         nonlocal processed_bytes
         processed_bytes += bytes_written
-        pct = min(0.92, 0.05 + (processed_bytes / total_bytes) * 0.87)
+        pct = min(0.90, 0.05 + (processed_bytes / total_bytes) * 0.85)
         if progress_callback:
             progress_callback(pct, f"Encrypting: {format_bytes(processed_bytes)} / {format_bytes(total_bytes)}")
 
-    # Collect items to pack
-    excluded_names = EXCLUDED_NAMES
-    items_to_pack = [item for item in os.listdir(folder_path) if item not in excluded_names]
+    items_to_pack = [item for item in os.listdir(folder_path) if item not in EXCLUDED_NAMES]
+    if not items_to_pack:
+        raise ValueError("The folder contains no items to protect.")
 
     try:
         salt = os.urandom(SALT_SIZE)
@@ -783,33 +918,33 @@ def lock_folder(folder_path: str, password: str,
             with tarfile.open(mode="w|", fileobj=enc_writer) as tar:
                 for item in items_to_pack:
                     full_p = os.path.join(folder_path, item)
-                    # Safe add without following external symlinks
                     tar.add(full_p, arcname=item, recursive=True, filter=None)
             enc_writer.close()
 
         if progress_callback:
-            progress_callback(0.94, "Verifying encryption integrity...")
+            progress_callback(0.92, "Verifying encryption archive integrity...")
 
-        # Test decrypting header before deleting any plaintext files
-        verify_file_password(temp_vault_file, password)
+        # Full verification of EVERY encrypted chunk and tar structure BEFORE deleting any plaintext files
+        verify_vault_integrity(temp_vault_file, password)
 
         if progress_callback:
-            progress_callback(0.96, "Securing folder contents...")
+            progress_callback(0.95, "Committing secure vault...")
 
-        # Safe removal of plaintext items
+        # Atomic commit: replace temporary vault into permanent .locked_vault
+        if os.path.exists(vault_file):
+            safe_remove_path(vault_file)
+        os.replace(temp_vault_file, vault_file)
+        set_file_attributes(vault_file, hidden=True, system=True)
+
+        if progress_callback:
+            progress_callback(0.97, "Securing folder contents...")
+
+        # Safe removal of plaintext items ONLY AFTER archive is verified and committed
         for item in items_to_pack:
             p = os.path.join(folder_path, item)
             safe_remove_path(p)
 
-        # Move temp vault to permanent .locked_vault
-        if os.path.exists(vault_file):
-            safe_remove_path(vault_file)
-        os.rename(temp_vault_file, vault_file)
-
-        # Hide .locked_vault
-        set_file_attributes(vault_file, hidden=True, system=True)
-
-        deploy_unlockers(folder_path)
+        clean_legacy_in_folder_binaries(folder_path)
 
         # Write bilingual instruction note
         try:
@@ -834,7 +969,8 @@ def unlock_folder(folder_path: str, password: str,
                   cancel_check: Optional[Callable[[], bool]] = None) -> str:
     """
     Unlocks an in-place locked folder (AES-256-GCM).
-    Decrypts files back into `folder_path`, removes vault and unlocker.
+    Decrypts files back into `folder_path`, removes vault safely.
+    Zero data loss: never overwrites existing files upon destination collision.
     """
     folder_path = os.path.abspath(folder_path)
 
@@ -866,11 +1002,11 @@ def unlock_folder(folder_path: str, password: str,
     def on_chunk(bytes_read: int):
         nonlocal processed_bytes
         processed_bytes += bytes_read
-        pct = min(0.95, 0.10 + (processed_bytes / vault_size) * 0.85)
+        pct = min(0.90, 0.10 + (processed_bytes / vault_size) * 0.80)
         if progress_callback:
             progress_callback(pct, f"Decrypting: {format_bytes(processed_bytes)} / {format_bytes(vault_size)}")
 
-    temp_extract_dir = os.path.join(target_dir, f".tmp_flock_extract_{os.getpid()}")
+    temp_extract_dir = os.path.join(target_dir, f".tmp_flock_extract_{os.getpid()}_{int(time.time())}")
     safe_remove_path(temp_extract_dir)
     os.makedirs(temp_extract_dir, exist_ok=True)
 
@@ -891,29 +1027,37 @@ def unlock_folder(folder_path: str, password: str,
             )
 
             with tarfile.open(mode="r|", fileobj=dec_reader) as tar:
-                if hasattr(tarfile, 'data_filter'):
-                    tar.extractall(temp_extract_dir, filter='data')
-                else:
-                    tar.extractall(temp_extract_dir)
+                for member in tar:
+                    member_path = os.path.abspath(os.path.join(temp_extract_dir, member.name))
+                    if not member_path.startswith(os.path.abspath(temp_extract_dir) + os.sep) and member_path != os.path.abspath(temp_extract_dir):
+                        raise CorruptedFileError(f"Security error: dangerous relative path in archive: {member.name}")
+                    if hasattr(tarfile, 'data_filter'):
+                        tar.extract(member, path=temp_extract_dir, filter='data')
+                    else:
+                        tar.extract(member, path=temp_extract_dir)
 
-        # Move extracted items into target directory
+        if progress_callback:
+            progress_callback(0.92, "Restoring decrypted files...")
+
+        # Move extracted items into target directory with collision resolution
         for item in os.listdir(temp_extract_dir):
             src = os.path.join(temp_extract_dir, item)
-            dst = os.path.join(target_dir, item)
-            if os.path.exists(dst):
-                safe_remove_path(dst)
+            dst = resolve_collision(target_dir, item)
             shutil.move(src, dst)
 
         safe_remove_path(temp_extract_dir)
 
-        # Clean up vault and instruction file
+        if progress_callback:
+            progress_callback(0.96, "Finalizing...")
+
+        # Clean up vault ONLY AFTER all items are safely restored
         safe_remove_path(vault_file)
 
-        # Save re-lock configuration and deploy Lock.exe / Kilitle.exe
-        save_relock_config(target_dir, mode="crypto", salt_hex=salt.hex(), hash_val="", password=password)
-        deploy_lockers(target_dir)
+        clean_legacy_in_folder_binaries(target_dir)
 
-        # Bilingual instruction file for unlocked state
+        # Save re-lock configuration
+        save_relock_config(target_dir, mode="crypto", salt_hex=salt.hex(), hash_val="", password=password)
+
         try:
             readme_path = os.path.join(target_dir, README_FILENAME)
             with open(readme_path, "w", encoding="utf-8") as f:
@@ -929,3 +1073,63 @@ def unlock_folder(folder_path: str, password: str,
     except Exception as e:
         safe_remove_path(temp_extract_dir)
         raise e
+
+
+def recover_instant_folder(folder_path: str, password: Optional[str] = None) -> Tuple[bool, str]:
+    """
+    Safely recovers an interrupted or damaged Instant-Locked folder (e.g. from an antivirus rollback).
+    Clears Deny ACL, unhides .locked_data, and restores any orphaned files
+    back to folder_path using non-destructive collision resolution.
+    Returns (success: bool, message: str).
+    """
+    folder_path = os.path.abspath(folder_path)
+    locked_data_dir = os.path.join(folder_path, INSTANT_DATA_DIRNAME)
+
+    if not os.path.isdir(locked_data_dir):
+        # Check if root folder itself had deny permissions
+        run_icacls([folder_path, "/remove:d", "*S-1-1-0"])
+        set_file_attributes(folder_path, hidden=False, system=False)
+        return True, "Permissions reset on folder root."
+
+    # Remove deny ACL and unhide container
+    set_file_attributes(locked_data_dir, hidden=False, system=False)
+    run_icacls([locked_data_dir, "/reset"])
+    run_icacls([locked_data_dir, "/remove:d", "*S-1-1-0"])
+
+    meta_path = os.path.join(locked_data_dir, META_FILENAME)
+    if os.path.isfile(meta_path) and password:
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            salt_hex = meta.get("salt")
+            expected_hash_hex = meta.get("hash")
+            if salt_hex and expected_hash_hex:
+                salt_bytes = bytes.fromhex(salt_hex)
+                kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt_bytes, iterations=PBKDF2_ITERATIONS)
+                derived = kdf.derive(password.encode("utf-8")).hex()
+                if not hmac.compare_digest(derived, expected_hash_hex):
+                    # Restore protection if wrong password provided
+                    set_file_attributes(locked_data_dir, hidden=True, system=True)
+                    run_icacls([locked_data_dir, "/deny", INSTANT_DENY_PERMS])
+                    return False, "Incorrect password."
+        except Exception as e:
+            return False, f"Failed verifying metadata: {e}"
+
+    # Move items back to parent folder safely
+    restored_count = 0
+    for item in os.listdir(locked_data_dir):
+        if item == META_FILENAME:
+            continue
+        src = os.path.join(locked_data_dir, item)
+        dst = resolve_collision(folder_path, item)
+        shutil.move(src, dst)
+        restored_count += 1
+
+    safe_remove_path(meta_path)
+    try:
+        os.rmdir(locked_data_dir)
+    except Exception:
+        pass
+
+    clean_legacy_in_folder_binaries(folder_path)
+    return True, f"Successfully recovered {restored_count} item(s)."

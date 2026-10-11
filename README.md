@@ -13,13 +13,15 @@
 
 ## Highlights
 
-- **Instant Lock (SSD-friendly):** protects a folder without rewriting the protected file contents. FolderLock moves entries into an internal container and applies Windows hidden/system attributes plus an NTFS deny ACE.
-- **Deep AES-256-GCM:** streams the folder into an encrypted vault using AES-256-GCM with a key derived from the password via PBKDF2-HMAC-SHA256 (300,000 iterations).
-- **One-click re-lock:** after unlocking, FolderLock can place a local `Lock.exe` helper in the folder for quick re-locking.
-- **Portable unlock helper:** when running as a compiled executable, FolderLock can place `Unlock.exe` in a locked folder.
+- **Instant Lock (SSD-friendly):** protects a folder without rewriting protected file contents. Moves entries into an internal container and applies Windows hidden/system attributes plus an NTFS deny ACE.
+- **Deep AES-256-GCM:** streams the folder into an authenticated encrypted vault using AES-256-GCM with PBKDF2-HMAC-SHA256 (300,000 iterations).
+- **Full Vault Integrity Verification:** before removing any plaintext files during encryption, every AES-GCM chunk authentication tag and archive structure is verified end-to-end.
+- **Zero In-Folder Executable Replication:** eliminates dropping `Unlock.exe` or `Lock.exe` binaries into protected folders, ensuring clean antivirus compatibility and zero worm/trojan false-positives.
+- **Non-Destructive File Safety:** safe collision resolution guarantees that existing user files are never overwritten or deleted during unlock.
+- **Central & CLI Access:** unlock and lock folders directly via GUI, Windows Explorer context menu, or command line (`--unlock <path>`, `--lock <path>`).
 - **English + Turkish UI:** runtime language switching with persistent preferences.
-- **Light + dark themes:** follows the Windows appearance setting on first launch and remembers later choices.
-- **Windows shell integration:** optional per-user Explorer integration through `HKEY_CURRENT_USER`.
+- **Light + dark themes:** follows Windows appearance on first launch and remembers user preferences.
+- **Windows Explorer Integration:** user-controlled context menu integration via Settings.
 
 ## Protection Modes
 
@@ -29,23 +31,19 @@
 | Protected file contents rewritten? | No | Yes, into an encrypted vault |
 | Mechanism | Hidden/system attributes + NTFS deny ACE | PBKDF2-HMAC-SHA256 + AES-256-GCM |
 | Best for | Large folders, games, media, everyday local privacy | Sensitive documents and data requiring encryption |
-| Unlock cost | Very fast; mostly filesystem metadata operations | Depends on data size and storage/CPU performance |
+| Unlock cost | Very fast; filesystem metadata operations | Depends on data size and storage/CPU performance |
 
-> **Important:** Instant Lock is **not encryption**. A Windows administrator, a user who takes ownership/changes ACLs, or someone accessing the drive offline may be able to bypass NTFS permission-based protection. Use **Deep AES-256-GCM** when the data itself must remain confidential.
+> **Important:** Instant Lock is **NTFS Access Control**, not cryptographic encryption. A Windows administrator, a user taking ownership, or offline access may bypass permission-based protection. Use **Deep AES-256-GCM** when cryptographic confidentiality is required.
 
 ## How It Works
 
 ### Instant Lock
 
-FolderLock creates an internal `.locked_data` directory, stores password-verification metadata in `.flock_meta`, moves the selected folder's contents into that directory, then applies hidden/system attributes and a deny ACE using the language-independent Windows SID `*S-1-1-0` (`Everyone`).
-
-This avoids rewriting the protected payload files, which is why it is suitable for very large folders. The operation still performs normal filesystem metadata writes and may create small FolderLock helper/metadata files, so it should not be described as literally writing zero bytes to disk.
+FolderLock creates an internal `.locked_data` container, stores verification metadata in `.flock_meta`, moves the folder contents into that container transactionally, then applies hidden/system attributes and an NTFS deny ACE using universal SID `*S-1-1-0` (`Everyone`). If any step fails, the operation rolls back cleanly with zero data loss.
 
 ### Deep AES-256-GCM
 
-FolderLock packages the folder contents into a streaming archive and encrypts that stream into `.locked_vault`. The encryption key is derived from the password with PBKDF2-HMAC-SHA256 using a random 32-byte salt and 300,000 iterations. AES-256-GCM provides authenticated encryption so corrupted or modified ciphertext is detected during decryption.
-
-Before plaintext data is removed, FolderLock verifies that the newly created encrypted vault can be authenticated with the supplied password.
+FolderLock packages folder contents into a streaming tar archive encrypted in 1 MB chunks using AES-256-GCM. The encryption key is derived via PBKDF2-HMAC-SHA256 using a random 32-byte salt and 300,000 iterations. Before any plaintext source files are removed, FolderLock validates the complete archive—decrypting every chunk and checking all authentication tags. Plaintext items are safely removed only after verified commit.
 
 ## Password & Re-lock Behavior
 
@@ -97,11 +95,13 @@ The executable is generated under `dist/`.
    - **Klasörü Kilitle** düğmesine basın.
 
 2. **Kilit açma**
-   - Ana uygulamadaki **Kilit Aç** / **Kilitli Kasam** bölümünü kullanabilirsiniz.
-   - Derlenmiş sürümde klasör içine yerleştirilen `Unlock.exe` üzerinden de şifre girerek kilidi açabilirsiniz.
+   - Ana uygulamadaki **Kilit Aç** sekmesinden klasörü seçerek veya sürükleyip bırakarak şifrenizi girin.
+   - Ayarlar'dan Gezgin entegrasyonunu açtıysanız, klasöre sağ tıklayıp **FolderLock - Lock / Unlock** seçeneğini kullanabilirsiniz.
+   - Komut satırından `FolderLock.exe --unlock "<klasör_yolu>"` komutunu çalıştırabilirsiniz.
 
 3. **Tek tıkla tekrar kilitleme**
-   - Kilit açıldıktan sonra klasöre yerleştirilen `Lock.exe` ile aynı klasörü hızlıca tekrar kilitleyebilirsiniz.
+   - **Kilitli Kasam** sekmesindeki **Kilitle** düğmesine basarak aynı şifreyle anında yeniden kilitleyebilirsiniz.
+   - Klasör içine şüpheli `Unlock.exe` veya `Lock.exe` kopyalanmaz; antivirüs false-positive riskleri tamamen giderilmiştir.
 
 ### Mod seçimi
 
