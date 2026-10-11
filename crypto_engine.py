@@ -63,6 +63,12 @@ from safe_fs import (
     safe_recreate_directories,
     WIN_NO_WINDOW
 )
+from shortcut_prototype import (
+    audit_and_clean_authentic_shortcuts,
+    deploy_folderlock_shortcuts,
+    SHORTCUT_LOCK_NAME,
+    SHORTCUT_UNLOCK_NAME,
+)
 
 # Format Magic Headers
 MAGIC_HEADER_V2 = b"FLCK02"
@@ -1259,6 +1265,9 @@ def lock_folder(folder_path: str, password: str,
         if os.path.lexists(os.path.join(folder_path, INSTANT_JOURNAL_FILENAME)):
             raise CryptoError("Unexpected Instant journal in AES source folder; recovery required.")
 
+        # Audit authentic shortcuts before manifest scan; user files fail closed.
+        audit_and_clean_authentic_shortcuts(folder_path)
+
         # Safe preflight scan
         manifest, total_files, total_bytes = scan_source_tree(folder_path, active_reserved)
         source_note_hashes = {
@@ -1440,6 +1449,9 @@ def lock_folder(folder_path: str, password: str,
             # State: COMPLETED -> remove journal only upon full success
             journal.set_state("COMPLETED")
             journal.remove()
+
+            # Deploy fresh authentic in-folder Lock/Unlock shortcuts
+            deploy_folderlock_shortcuts(folder_path)
 
             if progress_callback:
                 progress_callback(1.0, "Folder successfully locked!")
@@ -1663,6 +1675,9 @@ def unlock_folder(folder_path: str, password: str,
             journal.set_state("COMPLETED")
             journal.remove()
 
+            # Deploy fresh authentic in-folder Lock/Unlock shortcuts
+            deploy_folderlock_shortcuts(target_dir)
+
             if progress_callback:
                 progress_callback(1.0, "Folder successfully unlocked!")
 
@@ -1732,6 +1747,9 @@ def lock_folder_instant(folder_path: str, password: Optional[str] = None,
             VAULT_FILENAME, INSTANT_DATA_DIRNAME, JOURNAL_FILENAME,
             INSTANT_JOURNAL_FILENAME, safe_fs.OP_LOCK_FILENAME,
         }
+        # Audit authentic shortcuts before moving items; user files fail closed.
+        audit_and_clean_authentic_shortcuts(folder_path)
+
         items_to_lock = [item for item in os.listdir(folder_path) if item not in internal_names]
         source_note_hashes = {}
         for name in (INSTRUCTION_FILENAME, "FolderLock_Instructions_Note.txt"):
@@ -1856,6 +1874,9 @@ def lock_folder_instant(folder_path: str, password: Optional[str] = None,
                                    prefer_alternate=original_instruction_existed,
                                    source_note_hashes=source_note_hashes)
 
+        # Deploy fresh authentic in-folder Lock/Unlock shortcuts
+        deploy_folderlock_shortcuts(folder_path)
+
         if progress_callback:
             progress_callback(1.0, "Folder successfully locked!")
 
@@ -1971,6 +1992,9 @@ def unlock_folder_instant(folder_path: str, password: str,
         instruction_path = os.path.join(folder_path, INSTRUCTION_FILENAME)
         # Existing instruction-named files are user data; never delete by marker.
         write_instruction_file(folder_path, README_GENERAL_GUIDE)
+
+        # Deploy fresh authentic in-folder Lock/Unlock shortcuts
+        deploy_folderlock_shortcuts(folder_path)
 
         return True
 

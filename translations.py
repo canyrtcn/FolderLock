@@ -6,7 +6,7 @@ Supports English (default) and Turkish.
 from typing import Dict, Any
 
 # One source for displayed application version across GUI and CLI.
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
 
 TRANSLATIONS: Dict[str, Dict[str, str]] = {
     "en": {
@@ -123,6 +123,15 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "in_folder_desc": "Enter your password to unlock this folder.",
         "in_folder_unlock_btn": "Unlock Folder",
         "in_folder_success": "Folder successfully unlocked.",
+
+        # Direct In-Folder Lock Dialog
+        "in_folder_lock_title": "Lock Folder",
+        "in_folder_lock_desc": "Set protection mode and password for this folder.",
+        "in_folder_relock_desc": "This folder was previously protected. Re-lock with saved settings?",
+        "in_folder_relock_btn": "Re-Lock Now",
+        "in_folder_custom_lock_btn": "Change Settings / Password",
+        "in_folder_already_locked": "This folder is already locked.",
+        "in_folder_already_unlocked": "This folder is not locked.",
 
         # Help / User Guide Modal
         "help_btn_tooltip": "How to Use",
@@ -252,6 +261,15 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "in_folder_desc": "Bu klasörün kilidini açmak için şifrenizi girin.",
         "in_folder_unlock_btn": "Klasörün Kilidini Aç",
         "in_folder_success": "Klasör kilidi başarıyla açıldı.",
+
+        # Direct In-Folder Lock Dialog
+        "in_folder_lock_title": "Klasör Kilitle",
+        "in_folder_lock_desc": "Bu klasör için koruma modu ve şifre belirleyin.",
+        "in_folder_relock_desc": "Bu klasör daha önce kilitlenmişti. Kayıtlı ayarlarla yeniden kilitlemek istiyor musunuz?",
+        "in_folder_relock_btn": "Şimdi Yeniden Kilitle",
+        "in_folder_custom_lock_btn": "Yeni Ayar / Şifre Belirle",
+        "in_folder_already_locked": "Bu klasör zaten kilitli.",
+        "in_folder_already_unlocked": "Bu klasör kilitli değil.",
 
         # Help / User Guide Modal
         "help_btn_tooltip": "Nasıl Kullanılır?",

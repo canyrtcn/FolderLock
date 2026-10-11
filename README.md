@@ -17,10 +17,11 @@
 - **Deep AES-256-GCM (FLCK03):** streams the folder into an authenticated encrypted vault using AES-256-GCM with PBKDF2-HMAC-SHA256 (300,000 iterations). Each chunk binds sequence index, length, and termination flags in Associated Authenticated Data (AAD).
 - **Transactional State Machine:** persistent journal (`.flock_journal`) tracks encryption and commit states. Source files are safely removed only after complete end-to-end archive and authentication tag verification.
 - **Authenticated Recovery:** recovery requires proper password verification against container metadata. No automated passwordless bypass.
+- **In-Folder Lock & Unlock Shortcuts (v1.0.5):** protected folders automatically receive dedicated `FolderLock - Lock.lnk` and `FolderLock - Unlock.lnk` native Windows shortcuts. Double-clicking Unlock opens a lightweight password dialog; double-clicking Lock opens a compact lock modal (with 1-click re-lock for previously protected folders). Shortcuts reference the central FolderLock executable without duplicating helper EXEs or exposing passwords in arguments. Moving or deleting the central executable may invalidate existing shortcuts until regenerated.
 - **Zero In-Folder Binary Replication:** eliminates dropping `Unlock.exe` or `Lock.exe` binaries into protected folders, ensuring clean antivirus compatibility.
 - **Preservation of User Files:** user files (including user `Readme.txt` and user executables) are treated as regular protected files and never overwritten or deleted.
 - **Non-Destructive File Safety:** safe collision resolution guarantees that existing user files are never overwritten or deleted during unlock.
-- **Central & CLI Access:** unlock and lock folders directly via GUI, Windows Explorer context menu, or command line (`--unlock <path>`, `--lock <path>`, `--recover <path>`).
+- **Central & CLI Access:** unlock and lock folders directly via GUI, in-folder shortcuts, Windows Explorer context menu, or command line (`--unlock <path>`, `--lock <path>`, `--recover <path>`).
 - **English + Turkish UI:** runtime language switching with persistent preferences.
 - **Light + dark themes:** follows Windows appearance on first launch and remembers user preferences.
 - **Windows Explorer Integration:** user-controlled context menu integration via Settings.
@@ -79,8 +80,9 @@ Usage:
   FolderLock.exe [options] [folder_path]
 
 Options:
-  --unlock <path>     Unlock the specified locked folder
-  --lock <path>       Lock the specified folder (opens lock tab)
+  --unlock <path>     Unlock the specified locked folder (compact dialog or CLI)
+  --lock <path>       Lock the specified folder (compact dialog or CLI)
+  --mode <mode>       Lock mode: 'crypto' (AES-256-GCM) or 'instant' (NTFS)
   --relock <path>     Re-lock folder using saved credentials
   --recover <path>    Recover files from an interrupted Instant Lock folder (password required)
   --password, -p <pw> Optional password for CLI actions
@@ -132,12 +134,18 @@ The executable is generated under `dist/`.
    - **Klasörü Kilitle** düğmesine basın.
 
 2. **Kilit açma**
+   - Klasör içindeki **FolderLock - Unlock.lnk** kısayoluna çift tıklayarak küçük parola penceresinden kilidi anında açabilirsiniz.
    - Ana uygulamadaki **Kilit Aç** sekmesinden klasörü seçerek veya sürükleyip bırakarak şifrenizi girin.
    - Ayarlar'dan Gezgin entegrasyonunu açtıysanız, klasöre sağ tıklayıp **FolderLock - Lock / Unlock** seçeneğini kullanabilirsiniz.
    - Komut satırından `FolderLock.exe --unlock "<klasör_yolu>"` komutunu çalıştırabilirsiniz.
 
-3. **Tek tıkla tekrar kilitleme**
-   - **Kilitli Kasam** sekmesindeki **Kilitle** düğmesine basarak aynı şifreyle anında yeniden kilitleyebilirsiniz.
+3. **Klasör içi kısayollar (v1.0.5)**
+   - Korumaya alınan klasörlerde `FolderLock - Lock.lnk` ve `FolderLock - Unlock.lnk` yer alır.
+   - `Unlock` kısayolu küçük şifre penceresini açar; `Lock` kısayolu kayıtlı ayarlarla tek tıkla yeniden kilitleme penceresini açar.
+   - Kısayollar merkezi `FolderLock.exe` dosyasını referans alır. Uygulama dosyası taşınırsa kısayolların yeniden oluşturulması gerekebilir.
+
+4. **Tek tıkla tekrar kilitleme**
+   - Klasör içindeki `FolderLock - Lock.lnk` veya **Kilitli Kasam** sekmesindeki **Kilitle** düğmesine basarak aynı şifreyle anında yeniden kilitleyebilirsiniz.
    - Klasör içine yardımcı çalıştırılabilir dosyalar kopyalanmaz; antivirüs false-positive riskleri tamamen giderilmiştir.
 
 ### Mod seçimi
@@ -151,6 +159,7 @@ The executable is generated under `dist/`.
 main.py                # Main CustomTkinter application and CLI entrypoint
 crypto_engine.py       # Instant-lock and AES-GCM (FLCK03) protection logic
 safe_fs.py             # Hardened Windows filesystem abstraction & locking
+shortcut_prototype.py  # Native Windows Shell Link creation and ownership verification
 config_manager.py      # User settings and local vault registry
 shell_integration.py   # Windows Explorer integration
 translations.py        # English/Turkish localized strings

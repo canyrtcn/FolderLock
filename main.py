@@ -229,6 +229,309 @@ class InFolderUnlockApp(ctk.CTk):
         messagebox.showerror(t("dialog_error"), msg)
 
 
+class InFolderLockApp(ctk.CTk):
+    """
+    Mini lock modal launched when user runs FolderLock - Lock.lnk inside a folder
+    OR when an unlocked folder is targeted via CLI --lock without password flags.
+    Supports:
+    - Quick re-lock when previous re-lock configuration (.flock_relock) is present.
+    - Initial protection with choice of Instant Lock (NTFS) or Deep AES-256.
+    - Password entry and confirmation.
+    """
+    def __init__(self, folder_dir: str):
+        super().__init__()
+        self.folder_dir = os.path.abspath(folder_dir)
+        self.folder_name = os.path.basename(self.folder_dir.rstrip("/\\"))
+        self.is_busy = False
+
+        self.config_mgr = ConfigManager()
+        set_current_lang(self.config_mgr.language)
+
+        ctk.set_appearance_mode(self.config_mgr.theme)
+        ctk.set_default_color_theme("blue")
+
+        self.title(f"{self.folder_name} - {t('in_folder_lock_title')}")
+        self.geometry("440x360")
+        self.minsize(420, 320)
+        self.resizable(False, False)
+
+        self.protocol("WM_DELETE_WINDOW", self._on_closing)
+        self._set_icon()
+
+        # Check if saved re-lock config exists
+        self.relock_cfg = get_relock_config(self.folder_dir)
+        self.is_relock_mode = bool(self.relock_cfg)
+
+        self.container = ctk.CTkFrame(self, corner_radius=10)
+        self.container.pack(fill="both", expand=True, padx=16, pady=16)
+
+        # Top bar with language button
+        top_bar = ctk.CTkFrame(self.container, fg_color="transparent")
+        top_bar.pack(fill="x", padx=12, pady=(6, 0))
+
+        self.btn_lang = ctk.CTkButton(
+            top_bar,
+            text="TR" if self.config_mgr.language == "en" else "EN",
+            width=38,
+            height=24,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color=("gray85", "gray25"),
+            hover_color=("gray75", "gray35"),
+            text_color=("gray20", "gray80"),
+            command=self._toggle_lang
+        )
+        self.btn_lang.pack(side="right")
+
+        self.title_lbl = ctk.CTkLabel(
+            self.container,
+            text=self.folder_name,
+            font=ctk.CTkFont(size=16, weight="bold")
+        )
+        self.title_lbl.pack(pady=(4, 2))
+
+        self.desc_lbl = ctk.CTkLabel(
+            self.container,
+            text=t("in_folder_relock_desc") if self.is_relock_mode else t("in_folder_lock_desc"),
+            font=ctk.CTkFont(size=12),
+            text_color=("gray40", "gray60"),
+            wraplength=380
+        )
+        self.desc_lbl.pack(pady=(0, 10))
+
+        self.body_frame = ctk.CTkFrame(self.container, fg_color="transparent")
+        self.body_frame.pack(fill="both", expand=True, padx=12)
+
+        self.selected_mode = tk.StringVar(value="instant")
+        self.show_pwd = False
+
+        self._render_view()
+
+    def _set_icon(self):
+        base_dir = sys._MEIPASS if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS') else os.path.dirname(__file__)
+        icon_path = os.path.join(base_dir, "icon.ico")
+        if os.path.exists(icon_path):
+            try:
+                self.iconbitmap(icon_path)
+            except Exception:
+                pass
+
+    def _toggle_lang(self):
+        new_lang = "tr" if self.config_mgr.language == "en" else "en"
+        self.config_mgr.set_language(new_lang)
+        set_current_lang(new_lang)
+        self.btn_lang.configure(text="TR" if new_lang == "en" else "EN")
+        self.title(f"{self.folder_name} - {t('in_folder_lock_title')}")
+        self.desc_lbl.configure(text=t("in_folder_relock_desc") if self.is_relock_mode else t("in_folder_lock_desc"))
+        self._render_view()
+
+    def _render_view(self):
+        for widget in self.body_frame.winfo_children():
+            widget.destroy()
+
+        if self.is_relock_mode:
+            self._render_relock_view()
+        else:
+            self._render_manual_lock_view()
+
+    def _render_relock_view(self):
+        mode_str = "Instant Lock" if self.relock_cfg.get("mode") == "instant" else "AES-256"
+        mode_badge = ctk.CTkLabel(
+            self.body_frame,
+            text=f"Mod: {mode_str}",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color="#10b981"
+        )
+        mode_badge.pack(pady=(12, 16))
+
+        self.btn_relock = ctk.CTkButton(
+            self.body_frame,
+            text=t("in_folder_relock_btn"),
+            height=40,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color="#10b981",
+            hover_color="#059669",
+            command=self._do_relock
+        )
+        self.btn_relock.pack(fill="x", padx=16, pady=(0, 10))
+
+        btn_switch = ctk.CTkButton(
+            self.body_frame,
+            text=t("in_folder_custom_lock_btn"),
+            height=30,
+            font=ctk.CTkFont(size=11),
+            fg_color="transparent",
+            text_color=("gray30", "gray70"),
+            hover_color=("gray85", "gray25"),
+            command=self._switch_to_manual
+        )
+        btn_switch.pack(pady=(0, 6))
+
+        self.lbl_status = ctk.CTkLabel(
+            self.body_frame,
+            text="",
+            font=ctk.CTkFont(size=11),
+            text_color=("gray40", "gray60")
+        )
+        self.lbl_status.pack()
+
+    def _render_manual_lock_view(self):
+        mode_row = ctk.CTkFrame(self.body_frame, fg_color="transparent")
+        mode_row.pack(fill="x", pady=(0, 10))
+
+        self.mode_seg = ctk.CTkSegmentedButton(
+            mode_row,
+            values=["Instant Lock", "AES-256"],
+            command=self._on_mode_change
+        )
+        self.mode_seg.set("Instant Lock" if self.selected_mode.get() == "instant" else "AES-256")
+        self.mode_seg.pack(fill="x", padx=16)
+
+        pwd_row = ctk.CTkFrame(self.body_frame, fg_color="transparent")
+        pwd_row.pack(fill="x", padx=16, pady=4)
+
+        self.entry_pwd = ctk.CTkEntry(
+            pwd_row,
+            placeholder_text=t("password_placeholder"),
+            show="*" if not self.show_pwd else "",
+            height=36,
+            font=ctk.CTkFont(size=13)
+        )
+        self.entry_pwd.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        self.entry_pwd.focus_set()
+
+        self.btn_eye = ctk.CTkButton(
+            pwd_row,
+            text="",
+            image=get_eye_image(self.show_pwd),
+            width=36,
+            height=36,
+            fg_color=("gray75", "gray30"),
+            hover_color=("gray65", "gray40"),
+            command=self._toggle_eye
+        )
+        self.btn_eye.pack(side="right")
+
+        conf_row = ctk.CTkFrame(self.body_frame, fg_color="transparent")
+        conf_row.pack(fill="x", padx=16, pady=4)
+
+        self.entry_conf = ctk.CTkEntry(
+            conf_row,
+            placeholder_text=t("confirm_placeholder"),
+            show="*" if not self.show_pwd else "",
+            height=36,
+            font=ctk.CTkFont(size=13)
+        )
+        self.entry_conf.pack(fill="x")
+        self.entry_conf.bind("<Return>", lambda e: self._do_manual_lock())
+
+        self.btn_lock = ctk.CTkButton(
+            self.body_frame,
+            text=t("btn_lock_now"),
+            height=38,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color="#10b981",
+            hover_color="#059669",
+            command=self._do_manual_lock
+        )
+        self.btn_lock.pack(fill="x", padx=16, pady=(12, 6))
+
+        self.lbl_status = ctk.CTkLabel(
+            self.body_frame,
+            text="",
+            font=ctk.CTkFont(size=11),
+            text_color=("gray40", "gray60")
+        )
+        self.lbl_status.pack()
+
+    def _switch_to_manual(self):
+        self.is_relock_mode = False
+        self.desc_lbl.configure(text=t("in_folder_lock_desc"))
+        self._render_view()
+
+    def _on_mode_change(self, value):
+        self.selected_mode.set("instant" if value == "Instant Lock" else "crypto")
+
+    def _toggle_eye(self):
+        self.show_pwd = not self.show_pwd
+        if hasattr(self, 'entry_pwd') and hasattr(self, 'entry_conf'):
+            show_char = "" if self.show_pwd else "*"
+            self.entry_pwd.configure(show=show_char)
+            self.entry_conf.configure(show=show_char)
+            self.btn_eye.configure(image=get_eye_image(self.show_pwd))
+
+    def _do_relock(self):
+        if self.is_busy:
+            return
+        self.is_busy = True
+        self.btn_relock.configure(state="disabled", text="...")
+        self.lbl_status.configure(text=t("status_locking"))
+
+        def worker():
+            try:
+                relock_folder(self.folder_dir)
+                self.after(0, self._on_success)
+            except Exception as e:
+                self.after(0, lambda err=str(e): self._on_fail(err))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _do_manual_lock(self):
+        if self.is_busy:
+            return
+        pwd = self.entry_pwd.get()
+        conf = self.entry_conf.get()
+        if not pwd:
+            messagebox.showwarning(t("dialog_warning"), t("err_empty_password"))
+            return
+        if pwd != conf:
+            messagebox.showerror(t("dialog_error"), t("err_password_mismatch"))
+            return
+        if len(pwd) < 4:
+            messagebox.showwarning(t("dialog_warning"), t("err_password_short"))
+            return
+
+        self.is_busy = True
+        self.btn_lock.configure(state="disabled", text="...")
+        self.lbl_status.configure(text=t("status_locking"))
+        mode = self.selected_mode.get()
+
+        def worker():
+            try:
+                if mode == "instant":
+                    lock_folder_instant(self.folder_dir, pwd)
+                else:
+                    lock_folder(self.folder_dir, pwd)
+                self.after(0, self._on_success)
+            except Exception as e:
+                self.after(0, lambda err=str(e): self._on_fail(err))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_closing(self):
+        if self.is_busy:
+            messagebox.showwarning(t("dialog_warning"), "An operation is currently in progress. Please wait.")
+            return
+        self.destroy()
+
+    def _on_success(self):
+        if not self.winfo_exists():
+            return
+        self.withdraw()
+        messagebox.showinfo(t("dialog_success"), t("status_success_lock"))
+        self.destroy()
+
+    def _on_fail(self, msg: str):
+        if not self.winfo_exists():
+            return
+        self.is_busy = False
+        if hasattr(self, 'btn_lock'):
+            self.btn_lock.configure(state="normal", text=t("btn_lock_now"))
+        if hasattr(self, 'btn_relock'):
+            self.btn_relock.configure(state="normal", text=t("in_folder_relock_btn"))
+        self.lbl_status.configure(text="")
+        messagebox.showerror(t("dialog_error"), msg)
+
+
 class FolderLockApp(ctk.CTk):
     """
     Main FolderLock Desktop Application.
@@ -1576,16 +1879,15 @@ def main():
                     _show_quick_dialog(t("dialog_error"), str(e), is_error=True)
                 sys.exit(1)
         else:
+            if not os.path.exists(target):
+                _show_quick_dialog(t("dialog_error"), f"Path not found: {target}", is_error=True)
+                return
             if is_folder_locked(target):
                 app = InFolderUnlockApp(target)
                 app.mainloop()
                 return
             else:
-                app = FolderLockApp(config_mgr=cfg)
-                if os.path.isdir(target):
-                    app._set_folder_for_unlocking(target)
-                app.tabview.set("tab_unlock")
-                app.mainloop()
+                _show_quick_dialog(t("dialog_warning"), t("in_folder_already_unlocked"))
                 return
 
     # Lock command
@@ -1617,10 +1919,13 @@ def main():
                     _show_quick_dialog(t("dialog_error"), str(e), is_error=True)
                 sys.exit(1)
         else:
-            app = FolderLockApp(config_mgr=cfg)
-            if os.path.isdir(target):
-                app._set_folder_for_locking(target)
-            app.tabview.set("tab_lock")
+            if not os.path.exists(target):
+                _show_quick_dialog(t("dialog_error"), f"Path not found: {target}", is_error=True)
+                return
+            if is_folder_locked(target):
+                _show_quick_dialog(t("dialog_warning"), t("in_folder_already_locked"))
+                return
+            app = InFolderLockApp(target)
             app.mainloop()
             return
 
