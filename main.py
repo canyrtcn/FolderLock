@@ -1422,7 +1422,7 @@ def main():
     # Quick check for help
     if any(arg in ["--help", "-h", "/?", "-help"] for arg in args):
         help_text = (
-            "FolderLock v1.0.3 - Smart Folder Protection\n\n"
+            "FolderLock v1.0.4 - Smart Folder Protection\n\n"
             "Usage:\n"
             "  FolderLock.exe [options] [folder_path]\n\n"
             "Options:\n"
@@ -1443,7 +1443,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(
         prog="FolderLock",
-        description="FolderLock v1.0.3 - Smart Folder Protection",
+        description="FolderLock v1.0.4 - Smart Folder Protection",
         add_help=False
     )
     parser.add_argument("--quiet", "-q", action="store_true", dest="quiet")
