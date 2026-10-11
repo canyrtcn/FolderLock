@@ -1621,6 +1621,17 @@ def lock_folder_instant(folder_path: str, password: Optional[str] = None,
     if is_folder_locked(folder_path):
         raise ValueError("The folder is already locked.")
 
+    # The new container itself stores .flock_meta; a user file by the same
+    # root name would collide on rollback/unlock. Refuse before any mutation.
+    for ambiguous_name in (META_FILENAME, JOURNAL_FILENAME, INSTANT_JOURNAL_FILENAME):
+        if os.path.lexists(os.path.join(folder_path, ambiguous_name)):
+            raise CryptoError(
+                f"Pre-existing {ambiguous_name} conflicts with Instant Lock metadata; "
+                "rename or back up the user file before locking."
+            )
+    if os.path.lexists(os.path.join(folder_path, VAULT_FILENAME)):
+        raise CryptoError("Existing AES vault path conflicts with Instant Lock.")
+
     if not salt_hex or not hash_val:
         if not password:
             raise ValueError("Password cannot be empty.")
@@ -1643,8 +1654,13 @@ def lock_folder_instant(folder_path: str, password: Optional[str] = None,
         original_instruction_existed = os.path.lexists(instruction_path)
         # Existing instruction-named files are user data; never delete by marker.
 
-        # Collect user items to secure
-        items_to_lock = [item for item in os.listdir(folder_path) if item not in RESERVED_METADATA_NAMES]
+        # Only metadata actually owned by this operation is excluded. A user
+        # .flock_relock file must be moved into the protected container.
+        internal_names = {
+            VAULT_FILENAME, INSTANT_DATA_DIRNAME, JOURNAL_FILENAME,
+            INSTANT_JOURNAL_FILENAME, safe_fs.OP_LOCK_FILENAME,
+        }
+        items_to_lock = [item for item in os.listdir(folder_path) if item not in internal_names]
         if not items_to_lock:
             raise ValueError("The folder contains no items to protect.")
 

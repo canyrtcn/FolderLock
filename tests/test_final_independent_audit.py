@@ -97,6 +97,16 @@ class IndependentFinalAudit(unittest.TestCase):
         self.assertFalse(success,'Recovery reported success though manifest source file is missing')
         self.assertTrue(journal.exists(),'Recovery discarded journal before verifying user files')
 
+    def test_instant_root_metadata_collision_is_rejected_without_mutation(self):
+        p = self.protected / '.flock_meta'
+        payload = b'USER METADATA THAT MUST NOT BE OVERWRITTEN'
+        p.write_bytes(payload)
+        (self.protected / 'regular.txt').write_text('important', encoding='utf-8')
+        with self.assertRaises(Exception):
+            ce.lock_folder_instant(str(self.protected), self.pwd)
+        self.assertEqual(p.read_bytes(), payload)
+        self.assertFalse((self.protected / '.locked_data').exists())
+
     def test_instant_legacy_acl_fallback_requires_verified_password(self):
         with patch.object(ce,'run_icacls_safe',return_value=SimpleNamespace(stdout='EXAMPLE:(DENY)',returncode=0)), \
              patch.object(ce,'remove_hidden_system_attributes',return_value=None):
