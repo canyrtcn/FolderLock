@@ -13,6 +13,10 @@ import subprocess
 PYTHON_EXE = sys.executable
 MAIN_PY = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "main.py"))
 
+# Keep CLI version expectations aligned with the shared application version.
+sys.path.insert(0, os.path.dirname(MAIN_PY))
+from translations import APP_VERSION
+
 
 class TestCLI(unittest.TestCase):
     def setUp(self):
@@ -30,7 +34,7 @@ class TestCLI(unittest.TestCase):
         cmd = [PYTHON_EXE, MAIN_PY, "--help"]
         res = subprocess.run(cmd, capture_output=True, text=True)
         self.assertEqual(res.returncode, 0)
-        self.assertIn("FolderLock v1.0.3", res.stdout)
+        self.assertIn(f"FolderLock v{APP_VERSION}", res.stdout)
         self.assertIn("--unlock", res.stdout)
         self.assertIn("--lock", res.stdout)
         self.assertIn("--password-stdin", res.stdout)
