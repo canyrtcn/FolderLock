@@ -330,11 +330,54 @@ def is_folderlock_instruction_file(file_path: str) -> bool:
     return False
 
 
-def write_instruction_file(folder_path: str, content: str, prefer_alternate: bool = False) -> bool:
-    """Create a note without changing any pre-existing user file."""
-    candidates = (("FolderLock_Instructions_Note.txt",) if prefer_alternate else
-                  (INSTRUCTION_FILENAME, "FolderLock_Instructions_Note.txt"))
+README_GENERAL_GUIDE = (
+    f"{FOLDERLOCK_OWNERSHIP_TAG}\n"
+    "FOLDERLOCK / KLASOR KORUMASI\n\n"
+    "[EN] This folder can be locked or unlocked with FolderLock.\n"
+    "To access protected files, open FolderLock and enter your password.\n"
+    "To protect files again, select the folder in FolderLock.\n\n"
+    "[TR] Bu klasor FolderLock ile kilitlenebilir veya acilabilir.\n"
+    "Korunan dosyalara erismek icin FolderLock'u acip sifrenizi girin.\n"
+    "Yeniden korumak icin FolderLock icinden klasoru secin.\n"
+)
+
+
+def write_instruction_file(folder_path: str, content: str,
+                           prefer_alternate: bool = False,
+                           source_note_hashes: Optional[Dict[str, str]] = None) -> bool:
+    """Create only; never overwrite or delete user notes.
+
+    A source note is safe to recreate under the same name *only* if its
+    verified source hash equals the generated guide. Recreating the same bytes
+    allows AES extraction to deduplicate by hash without multiplying notes.
+    """
+    payload = content.encode("utf-8")
+    expected_hash = hashlib.sha256(payload).hexdigest()
+    sources = source_note_hashes or {}
+    names = (INSTRUCTION_FILENAME, "FolderLock_Instructions_Note.txt")
+
+    # Idempotence: an identical generated guide already exists. This only
+    # suppresses a new write; it never deletes or modifies an existing file.
+    for name in names:
+        path = os.path.join(folder_path, name)
+        try:
+            if (not os.path.islink(path) and os.path.isfile(path)
+                    and os.stat(path).st_size == len(payload)):
+                with open(path, "rb") as f:
+                    if f.read(len(payload) + 1) == payload:
+                        return True
+        except OSError:
+            pass
+
+    # Reuse the same name for a byte-identical neutral guide. Its encrypted
+    # source copy will verify equal upon restore, so no extra note accumulates.
+    candidates = ((names[1], names[0]) if prefer_alternate and
+                  sources.get(INSTRUCTION_FILENAME) != expected_hash else names)
     for candidate in candidates:
+        # A pre-lock user file will be restored from the vault. Do not create
+        # a new guide at its old path unless the bytes are *identical*.
+        if candidate in sources and sources[candidate] != expected_hash:
+            continue
         target = os.path.join(folder_path, candidate)
         try:
             with open(target, "x", encoding="utf-8") as stream:
@@ -344,8 +387,12 @@ def write_instruction_file(folder_path: str, content: str, prefer_alternate: boo
             continue
         except OSError:
             return False
+
     for _ in range(16):
-        target = os.path.join(folder_path, f"FolderLock_Instructions_{uuid.uuid4().hex}.txt")
+        candidate = f"FolderLock_Instructions_{uuid.uuid4().hex}.txt"
+        if candidate in sources:
+            continue
+        target = os.path.join(folder_path, candidate)
         try:
             with open(target, "x", encoding="utf-8") as stream:
                 stream.write(content)
@@ -1144,11 +1191,10 @@ def lock_folder(folder_path: str, password: str,
     if not password:
         raise ValueError("Password cannot be empty.")
 
-    # A legacy instruction-name collision is ambiguous: the textual ownership
-    # marker is user-forgeable. Refuse before changing the folder rather than
-    # deleting the file or silently replacing it with a generated note.
-    if os.path.lexists(os.path.join(folder_path, INSTRUCTION_FILENAME)):
-        raise CryptoError("Existing FolderLock_Instructions.txt cannot be authenticated as internal data; rename or back up this file before locking.")
+    # An existing instruction-named file is user data, not proof of
+    # FolderLock ownership. Include it in the AES manifest and encrypted
+    # archive; never remove or overwrite it based on its text marker.
+    # This also permits locking a directory previously unlocked by FolderLock.
 
     vault_file = os.path.join(folder_path, VAULT_FILENAME)
     if os.path.lexists(vault_file):
@@ -1196,6 +1242,12 @@ def lock_folder(folder_path: str, password: str,
 
         # Safe preflight scan
         manifest, total_files, total_bytes = scan_source_tree(folder_path, active_reserved)
+        source_note_hashes = {
+            info["rel_path"]: info["sha256"]
+            for info in manifest
+            if not info.get("is_dir") and info["rel_path"] in
+            (INSTRUCTION_FILENAME, "FolderLock_Instructions_Note.txt")
+        }
         if not manifest:
             raise ValueError("The folder contains no items to protect.")
 
@@ -1362,8 +1414,9 @@ def lock_folder(folder_path: str, password: str,
                     pass
 
             # Write instruction note
-            write_instruction_file(folder_path, README_LOCKED_TEXT,
-                                   prefer_alternate=original_instruction_existed)
+            write_instruction_file(folder_path, README_GENERAL_GUIDE,
+                                   prefer_alternate=original_instruction_existed,
+                                   source_note_hashes=source_note_hashes)
 
             # State: COMPLETED -> remove journal only upon full success
             journal.set_state("COMPLETED")
@@ -1585,7 +1638,7 @@ def unlock_folder(folder_path: str, password: str,
             # Clean old instruction file if present and write unlocked note
             instruction_path = os.path.join(target_dir, INSTRUCTION_FILENAME)
         # Existing instruction-named files are user data; never delete by marker.
-            write_instruction_file(target_dir, README_UNLOCKED_TEXT)
+            write_instruction_file(target_dir, README_GENERAL_GUIDE)
 
             # Complete transaction
             journal.set_state("COMPLETED")
@@ -1661,6 +1714,11 @@ def lock_folder_instant(folder_path: str, password: Optional[str] = None,
             INSTANT_JOURNAL_FILENAME, safe_fs.OP_LOCK_FILENAME,
         }
         items_to_lock = [item for item in os.listdir(folder_path) if item not in internal_names]
+        source_note_hashes = {}
+        for name in (INSTRUCTION_FILENAME, "FolderLock_Instructions_Note.txt"):
+            source_path = os.path.join(folder_path, name)
+            if name in items_to_lock and os.path.isfile(source_path) and not os.path.islink(source_path):
+                source_note_hashes[name] = compute_file_sha256(source_path)
         if not items_to_lock:
             raise ValueError("The folder contains no items to protect.")
 
@@ -1768,8 +1826,10 @@ def lock_folder_instant(folder_path: str, password: Optional[str] = None,
             progress_callback(0.8, "Finalizing protection...")
 
         # Write instruction note
-        write_instruction_file(folder_path, README_LOCKED_TEXT,
-                                   prefer_alternate=original_instruction_existed)
+        if hashlib.sha256(README_GENERAL_GUIDE.encode("utf-8")).hexdigest() not in source_note_hashes.values():
+            write_instruction_file(folder_path, README_GENERAL_GUIDE,
+                                   prefer_alternate=original_instruction_existed,
+                                   source_note_hashes=source_note_hashes)
 
         if progress_callback:
             progress_callback(1.0, "Folder successfully locked!")
@@ -1885,7 +1945,7 @@ def unlock_folder_instant(folder_path: str, password: str,
         # Clean old instruction note and write unlocked note
         instruction_path = os.path.join(folder_path, INSTRUCTION_FILENAME)
         # Existing instruction-named files are user data; never delete by marker.
-        write_instruction_file(folder_path, README_UNLOCKED_TEXT)
+        write_instruction_file(folder_path, README_GENERAL_GUIDE)
 
         return True
 
@@ -1995,7 +2055,7 @@ def recover_instant_folder(folder_path: str, password: Optional[str] = None) -> 
 
         instruction_path = os.path.join(folder_path, INSTRUCTION_FILENAME)
         # Existing instruction-named files are user data; never delete by marker.
-        write_instruction_file(folder_path, README_UNLOCKED_TEXT)
+        write_instruction_file(folder_path, README_GENERAL_GUIDE)
 
         return True, f"Successfully recovered {restored_count} item(s)."
 

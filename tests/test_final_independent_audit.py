@@ -56,8 +56,9 @@ class IndependentFinalAudit(unittest.TestCase):
         except Exception:
             self.assertEqual(p.read_bytes(),original)
             return
-        self.assertNotEqual(p.read_bytes(),ce.README_LOCKED_TEXT.encode('utf-8'),
-                            'User instruction text was deleted and replaced based only on untrusted marker')
+        # Correct protection encrypts the user note (therefore it must be
+        # absent in plaintext), then restores its exact bytes on unlock.
+        self.assertFalse(p.exists(), 'User instruction must not remain plaintext after AES lock')
         ce.unlock_folder(str(self.protected),self.pwd)
         self.assertEqual(p.read_bytes(),original)
 
