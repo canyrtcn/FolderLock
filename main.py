@@ -172,8 +172,8 @@ class InFolderUnlockApp(ctk.CTk):
     def _do_unlock(self):
         if self.is_busy:
             return
-        pwd = self.entry_pwd.get().strip()
-        if not pwd:
+        pwd = self.entry_pwd.get()
+        if len(pwd) == 0:
             return
 
         self.is_busy = True
@@ -244,7 +244,7 @@ class FolderLockApp(ctk.CTk):
         self.show_unlock_password = False
 
         self._build_ui()
-        self.refresh_vault_list()
+        self.after(50, self.refresh_vault_list)
         self._check_cli_args()
 
     def _set_icon(self):
@@ -785,11 +785,17 @@ class FolderLockApp(ctk.CTk):
     def _on_shell_toggle_click(self):
         try:
             if is_shell_integration_enabled():
-                remove_shell_integration()
-                messagebox.showinfo(t("dialog_success"), t("shell_success_disabled"))
+                ok, msg = remove_shell_integration()
+                if ok:
+                    messagebox.showinfo(t("dialog_success"), t("shell_success_disabled"))
+                else:
+                    messagebox.showerror(t("dialog_error"), msg)
             else:
-                setup_shell_integration()
-                messagebox.showinfo(t("dialog_success"), t("shell_success_enabled"))
+                ok, msg = setup_shell_integration()
+                if ok:
+                    messagebox.showinfo(t("dialog_success"), t("shell_success_enabled"))
+                else:
+                    messagebox.showerror(t("dialog_error"), msg)
         except Exception as e:
             messagebox.showerror(t("dialog_error"), str(e))
         self._refresh_shell_button()
@@ -1378,15 +1384,16 @@ def main():
     # Quick check for help
     if any(arg in ["--help", "-h", "/?", "-help"] for arg in args):
         help_text = (
-            "FolderLock v1.0.1 - Smart Folder Protection\n\n"
+            "FolderLock v1.0.2 - Smart Folder Protection\n\n"
             "Usage:\n"
             "  FolderLock.exe [options] [folder_path]\n\n"
             "Options:\n"
             "  --unlock <path>     Unlock the specified locked folder\n"
             "  --lock <path>       Lock the specified folder\n"
             "  --relock <path>     Re-lock folder using saved credentials\n"
-            "  --recover <path>    Recover files from an interrupted Instant Lock folder\n"
+            "  --recover <path>    Recover files from an interrupted Instant Lock folder (password required)\n"
             "  --password, -p <pw> Optional password for CLI actions\n"
+            "  --password-stdin    Read password securely from standard input\n"
             "  --quiet, -q         Suppress message dialogs (exit code 0 on success, 1 on error)\n"
             "  --help, -h, /?      Show this help message\n"
         )
@@ -1397,7 +1404,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(
         prog="FolderLock",
-        description="FolderLock v1.0.1 - Smart Folder Protection",
+        description="FolderLock v1.0.2 - Smart Folder Protection",
         add_help=False
     )
     parser.add_argument("--quiet", "-q", action="store_true", dest="quiet")
@@ -1406,6 +1413,7 @@ def main():
     parser.add_argument("--relock", type=str, dest="relock", default=None, metavar="PATH")
     parser.add_argument("--recover", type=str, dest="recover", default=None, metavar="PATH")
     parser.add_argument("--password", "-p", type=str, dest="password", default=None)
+    parser.add_argument("--password-stdin", action="store_true", dest="password_stdin")
     parser.add_argument("target_path", nargs="?", default=None)
 
     parsed_args, unknown = parser.parse_known_args(args)
@@ -1414,7 +1422,36 @@ def main():
     # Recover command
     if parsed_args.recover:
         target = os.path.abspath(parsed_args.recover)
-        success, msg = recover_instant_folder(target, password=parsed_args.password)
+        pwd = parsed_args.password
+        if parsed_args.password_stdin:
+            try:
+                pwd = sys.stdin.readline().rstrip('\r\n')
+            except Exception:
+                pwd = None
+
+        if not pwd:
+            if is_quiet:
+                print("[ERROR] Password is required for recovery.")
+                sys.exit(1)
+            else:
+                try:
+                    import getpass
+                    if sys.stdin.isatty():
+                        pwd = getpass.getpass("Enter password for Instant Lock recovery: ")
+                    else:
+                        root = tk.Tk()
+                        root.withdraw()
+                        dialog = ModernPasswordDialog(root, t("in_folder_title"), t("unlock_password_placeholder"))
+                        pwd = dialog.get_input()
+                        root.destroy()
+                except Exception:
+                    pwd = None
+
+        if not pwd:
+            print("[ERROR] Recovery cancelled: password was not provided.")
+            sys.exit(1)
+
+        success, msg = recover_instant_folder(target, password=pwd)
         if is_quiet:
             print(f"[{'SUCCESS' if success else 'ERROR'}] {msg}")
             sys.exit(0 if success else 1)

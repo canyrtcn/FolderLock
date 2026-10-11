@@ -10,7 +10,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # App Info
         "app_title": "FolderLock",
         "app_subtitle": "Smart Folder Protection",
-        "version": "1.0.1",
+        "version": "1.0.2",
 
         # Tabs
         "tab_lock": "Lock Folder",
@@ -138,7 +138,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # App Info
         "app_title": "FolderLock",
         "app_subtitle": "Akıllı Klasör Kilitleyici",
-        "version": "1.0.1",
+        "version": "1.0.2",
 
         # Tabs
         "tab_lock": "Klasör Kilitle",

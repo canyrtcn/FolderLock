@@ -1,58 +1,64 @@
-# FolderLock v1.0.1 — Security Hardening, Antivirus Compatibility & Integrity Safeguards
+# FolderLock v1.0.2
 
-## English
+**Security & Reliability Update**
 
-### 🛡️ Security & Antivirus False-Positive Remediation
-- **Eliminated In-Folder Binaries**: FolderLock no longer drops `Unlock.exe` or `Lock.exe` into locked folders. All operations are handled centrally by the main application or through Windows Explorer shell integration, completely eliminating suspicious binary replication flags (e.g. Kaspersky `PDM:Trojan.Win32.Generic`).
-- **Removed Self-Deletion Subprocesses**: Removed delayed `cmd.exe /c ping ... & del ...` loops previously used for cleanup.
-- **UPX Compression Removed**: Disabled UPX executable packing in PyInstaller builds to eliminate heuristic packer detections.
-- **Legacy Cleanup**: Automatically and safely removes orphaned `Unlock.exe` / `Lock.exe` files created by older versions upon unlocking, without touching user data.
+FolderLock v1.0.2 focuses on safer file operations, stronger integrity validation, improved recovery behavior, and compatibility with folders protected by earlier versions.
 
-### 🔒 Data Integrity & Zero Data Loss Architecture
-- **Transactional Instant Lock**: File relocations are strictly transactional; if any step fails, changes automatically roll back to their original state.
-- **Streaming Vault Verification**: AES-256-GCM vaults now undergo full multi-chunk authentication tag validation and tar stream parsing *before* source files are removed.
-- **Collision Preservation**: Destination collisions during unlock or recovery are preserved using non-destructive rename schemes (`<filename>_restored_1.<ext>`) rather than overwriting or deleting user files.
-- **Antivirus Recovery Mechanism (`--recover`)**: Built-in CLI recovery tool safely resets ACLs, unhides protected containers, and restores user files if an antivirus terminates an active lock/unlock operation.
+This release addresses issues identified during the security review, with particular attention to preventing unintended file changes and improving failure handling.
 
-### 💻 Windows Shell & CLI Integration
-- **Clean Explorer Context Menu**: Optional Windows Explorer integration accessible via Settings (HKEY_CURRENT_USER, no admin privileges required).
-- **Command-Line Interface**:
-  - `--lock <folder>`: Opens FolderLock with folder pre-selected for locking
-  - `--unlock <folder>`: Unlocks protected folder via lightweight interface
-  - `--relock <folder>`: Re-locks folder using saved DPAPI credentials
-  - `--recover <folder>`: Recovers interrupted or quarantined Instant Lock folders
-  - `--quiet`, `-q`: Headless mode for scripting and automation (exit code 0 on success, 1 on error)
+### What's Changed
 
----
+**File Safety & Recovery**
+- Improved recovery validation for Instant Lock containers: recovery now strictly requires password authentication to prevent unauthorized container extraction.
+- Strengthened safeguards against unintended file replacement and deletion: user files (including user `Readme.txt` and user executables) are treated as regular protected files and are never automatically deleted or overwritten.
+- Replaced broad recursive cleanup utilities with narrow, verified file removal functions.
+- Improved handling of interrupted operations and partial failures with transactional state journaling.
+- Refined Windows file permission management and recovery procedures with non-destructive collision resolution.
 
-## Türkçe
+**Encryption & Data Integrity**
+- Introduced the FLCK03 authenticated vault format with chunk-level Associated Authenticated Data (AAD), binding chunk index, payload length, and termination flags.
+- Strengthened encrypted archive validation: bounded chunk sizes (max 2 MB), explicit authenticated EOF markers, and rejection of trailing data.
+- Enhanced validation before protected source files are removed: plaintext source files are committed for removal only after complete stream and tag verification.
+- Maintained backward compatibility: full support for reading and decrypting legacy FLCK02 vaults created by earlier versions.
 
-### 🛡️ Güvenlik ve Antivirüs Uyumluluğu İyileştirmeleri
-- **Klasör İçi EXE Kopyalama Kaldırıldı**: Artık korunan klasörlerin içerisine `Unlock.exe` veya `Lock.exe` kopyalanmaz. Tüm kilit açma ve kilitleme işlemleri merkezi ana uygulama ve Windows Explorer entegrasyonu üzerinden yürütülür; böylece Kaspersky (`PDM:Trojan.Win32.Generic`) ve diğer güvenlik yazılımlarının şüpheli dosya çoğaltma uyarıları giderilmiştir.
-- **Kendi Kendini Silen CMD Komutları Kaldırıldı**: Temizlik amacıyla arka planda çalıştırılan gecikmeli `ping ... & del` komutları kaldırılmıştır.
-- **UPX Sıkıştırması Kaldırıldı**: Hevristik antivirüs tarayıcılarının paketleyici şüphelerini önlemek için UPX sıkıştırması iptal edilmiştir.
-- **Eski Sürüm Temizliği**: Önceki v1.0.0 sürümünden kalan `Unlock.exe` ve `Lock.exe` kalıntıları, kilit açma sırasında kullanıcı dosyalarına dokunulmadan güvenle temizlenir.
+**Windows Integration & Usability**
+- Added `--password-stdin` support for secure headless scripted execution.
+- Fixed password handling in direct unlock dialogs to preserve exact entered characters without stripping leading/trailing whitespace.
+- Refined Windows Explorer integration error reporting and configuration verification.
+- Deferred background vault list inspection on startup for responsive initial window rendering.
+- Continued use of the central FolderLock application without copying helper executables into protected folders.
 
-### 🔒 Veri Bütünlüğü ve Sıfır Veri Kaybı Mimarisi
-- **İşlemsel (Transactional) Instant Lock**: Taşıma işlemleri atomik ve işlemseldir; herhangi bir adımda hata olursa tüm değişiklikler orijinal durumuna geri alınır.
-- **Akış Seviyesinde Kasa Doğrulaması**: AES-256-GCM modunda şifrelenen kasalar, kaynak dosyalar silinmeden önce 1MB'lık parçalar halinde kimlik doğrulama etiketleri (GCM tag) ve tar arşivi test edilerek baştan sona teyit edilir.
-- **Çakışma Koruması**: Kilit açma veya kurtarma sırasında hedef dizinde aynı isimde dosya varsa üzerine yazılmaz; `_restored_1` formatında yeni bir isim verilerek her iki dosya da korunur.
-- **Antivirüs Müdahalesi Kurtarma Aracı (`--recover`)**: Güvenlik yazılımının işlemi yarıda kesmesi veya karantinaya alması durumunda `--recover` komutu ACL izinlerini sıfırlar ve dosyaları güvenle dışarı aktarır.
+**Packaging & Performance**
+- Continued distribution without UPX executable compression to minimize heuristic packer flags.
+- Provided both standalone executable and portable directory distribution bundles.
+- Updated Windows version resource metadata to 1.0.2.0.
 
-### 💻 Komut Satırı ve Kabuk Entegrasyonu
-- **Windows Explorer Sağ Tık Menüsü**: Ayarlar sekmesinden tek tıkla açılıp kapatılabilen, yönetici yetkisi gerektirmeyen (HKCU) kabuk entegrasyonu.
-- **Gelişmiş CLI**:
-  - `--lock <klasör>`: Belirtilen klasörü kilitleme arayüzünde açar
-  - `--unlock <klasör>`: Kilitli klasörü açma arayüzünde açar
-  - `--relock <klasör>`: Kayıtlı kimlik bilgileriyle doğrudan yeniden kilitler
-  - `--recover <klasör>`: Yarıda kesilmiş klasörü kurtarır
-  - `--quiet`, `-q`: Otomasyon için sessiz mod (0 = başarılı, 1 = hata)
+### Compatibility
 
----
+| Component | Support |
+|---|---|
+| Operating systems | Windows 10 / Windows 11 |
+| Instant Lock | Supported |
+| AES-256-GCM protection (FLCK03) | Supported |
+| Existing v1.0.0/v1.0.1 protected folders | Supported (FLCK02 backward-compatibility verified) |
+| English / Turkish interface | Supported |
+| Windows Explorer integration | Optional |
 
-## 📦 Hashes & Verification / Doğrulama
+### Downloads & Checksums
 
-| File / Dosya | Size / Boyut | SHA-256 Checksum |
-| :--- | :--- | :--- |
-| **FolderLock.exe** | 24,537,291 bytes (~23.4 MB) | `F4E29965CB8B606532C0807FEB006295C95F73C2A9919A40583B8515B53B38C3` |
-| **FolderLock-v1.0.1-portable.zip** | 24,572,187 bytes (~23.4 MB) | `8817EDCB6AFCC98A7EBA170F480B3D649F4200DF47B07086545C6C6ABCDAECD3` |
+| File | Size | SHA-256 Checksum |
+|---|---|---|
+| **FolderLock.exe** | 24,544,489 bytes (~23.4 MB) | `27c267888edb6057c6b28a1c93a6f9a73e23b3d60fec125f2d3990ae7ecc6fca` |
+| **FolderLock-v1.0.2-portable.zip** | 24,580,936 bytes (~23.4 MB) | `a8c860d9bde8a7ec680270612c7e215f957ca87cac58c6a9c11ba2940c5e4232` |
+| **SHA256SUMS.txt** | 185 bytes | `4fba85180bf9185ac1202efa540f9d1d089fef5608af4140c95abc6b622f41ae` |
+
+### Upgrading
+
+Existing protected folders remain accessible through the updated application.
+For important data, maintain independent backups before modifying protected folders.
+
+### Security Notes
+
+Instant Lock uses Windows NTFS access controls and does not provide cryptographic confidentiality. A Windows administrator may manage file permissions independently.
+AES-256-GCM mode provides authenticated encryption for protected file contents.
+Antivirus compatibility improvements are intended to reduce heuristic detections. They do not guarantee that every security product will classify the application identically.
