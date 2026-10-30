@@ -13,6 +13,7 @@
 
 ## Highlights
 
+- **Explorer re-lock fixes (v1.0.7):** thumbnail readers that permit native rename sharing no longer cause a false `WinError 32`. Explorer launches for unlocked folders always select **Lock Folder**, including folders with saved re-lock settings.
 - **Windows lock reliability (v1.0.6):** Instant Lock handles Windows metadata and thumbnail handles that prevent whole-directory renames. A journaled fallback moves individual entries on the same volume without rewriting file contents and restores them if a move fails.
 - **Portable Explorer registration (v1.0.6):** right-click integration uses the running executable's location. Launching an updated or relocated EXE refreshes an existing FolderLock registration; users who disabled integration keep it disabled.
 - **Instant Lock (SSD-friendly):** restricts folder access without rewriting protected file contents. Moves entries into an internal container and applies Windows hidden/system attributes plus an NTFS deny ACE.
@@ -138,7 +139,7 @@ The binary checks require both `FolderLock.spec` and `FolderLock_onedir.spec` to
 
 ### Troubleshooting Instant Lock
 
-Windows can return `WinError 5` for a directory move even when an open child-file handle only queries metadata. FolderLock v1.0.6 keeps the fast directory move and falls back to reversible entry-by-entry moves for this case. Directory streams, timestamps, attributes, and permissions are preserved by the fallback. Real data readers/writers and insufficient permissions still produce an error; close the application using the file and retry.
+Windows can return `WinError 5` for a directory move when a child file is open. FolderLock keeps the fast directory move and falls back to reversible entry-by-entry moves for this case. Directory streams, timestamps, attributes, and permissions are preserved by the fallback. Starting with v1.0.7, files held by readers that permit `FILE_SHARE_DELETE` can move normally; an unnecessary exclusive-read check in v1.0.6 incorrectly rejected those readers. If another application actually denies rename sharing, Windows still refuses the move and FolderLock rolls it back. Close that application and retry.
 
 Explorer integration always points to a specific executable on disk. Extract the portable package to its intended location before enabling integration. After moving or updating FolderLock, run the new executable once to refresh an existing right-click registration, or enable integration in Settings. No administrator rights are needed. In-folder shortcuts continue to reference their original executable; keeping that executable at the same path preserves existing shortcuts.
 

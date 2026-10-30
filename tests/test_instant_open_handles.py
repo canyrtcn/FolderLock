@@ -103,12 +103,27 @@ class InstantOpenHandleTests(unittest.TestCase):
             self.assertEqual(stream.read(), b"directory stream must survive")
 
     def test_active_data_reader_fails_and_restores_everything(self):
-        for share in (3, 7):
-            with self.subTest(share=share), self.open_handle(access=safe_fs.GENERIC_READ, share=share):
-                with self.assertRaises(ce.CryptoError) as raised:
-                    ce.lock_folder_instant(str(self.root), self.password)
-                self.assertIn("File in use", str(raised.exception))
-                self.assert_restored()
+        # Without FILE_SHARE_DELETE, Windows genuinely prohibits the rename.
+        with self.open_handle(access=safe_fs.GENERIC_READ, share=3):
+            with self.assertRaises(ce.CryptoError) as raised:
+                ce.lock_folder_instant(str(self.root), self.password)
+            self.assertIn("File in use", str(raised.exception))
+            self.assert_restored()
+
+    def test_shared_reader_allows_lock_unlock_and_relock(self):
+        # Explorer's COM thumbnail reader permits DELETE/rename sharing.
+        # An exclusive read probe rejects it even though native moves work.
+        with self.open_handle(access=safe_fs.GENERIC_READ, share=7):
+            probe = safe_fs._CreateFileW(str(self.photo), 0x10000, 7, None, 3, 0, None)
+            self.assertNotEqual(probe, safe_fs.INVALID_HANDLE_VALUE, ctypes.get_last_error())
+            safe_fs._CloseHandle(probe)
+            ce.lock_folder_instant(str(self.root), self.password)
+            self.assertFalse(self.sub.exists())
+            ce.unlock_folder_instant(str(self.root), self.password)
+            self.assert_restored()
+            ce.relock_folder(str(self.root))
+            ce.unlock_folder_instant(str(self.root), self.password)
+            self.assert_restored()
 
     def test_failure_after_a_child_move_rolls_back(self):
         real_move = ce.move_no_replace

@@ -1955,12 +1955,6 @@ def main():
                 app = InFolderUnlockApp(target)
                 app.mainloop()
                 return
-            elif get_relock_config(target):
-                app = FolderLockApp(config_mgr=cfg)
-                app._set_folder_for_locking(target)
-                app.tabview.set("tab_vault")
-                app.mainloop()
-                return
             else:
                 app = FolderLockApp(config_mgr=cfg)
                 app._set_folder_for_locking(target)

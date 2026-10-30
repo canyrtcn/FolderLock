@@ -1770,21 +1770,11 @@ def _move_instant_item(src: str, dst: str,
             if safe_fs.is_reparse_point(child_src):
                 raise SafeFSError(f"Refusing directory fallback through reparse point: {child_src}")
             pending("MOVE_DIRECTORY_CHILD", child_src, child_dst)
-            # Attribute-only handles remain compatible. An active data reader
-            # or writer must close the file before protection can proceed.
-            handle = None
-            if not os.path.isdir(child_src):
-                handle = safe_fs._CreateFileW(child_src, safe_fs.GENERIC_READ,
-                                               4, None, 3, 0x00200000, None)
-                if handle == safe_fs.INVALID_HANDLE_VALUE:
-                    raise PermissionError(13, "File in use or access denied; close applications using this file",
-                                          child_src, ctypes.get_last_error())
-            try:
-                _move_instant_item(child_src, child_dst, journal)
-                moved_children.append((child_src, child_dst))
-            finally:
-                if handle is not None:
-                    safe_fs._CloseHandle(handle)
+            # Honor native rename sharing. Explorer thumbnail readers can
+            # allow FILE_SHARE_DELETE while an exclusive read probe rejects
+            # them. MoveFileExW itself enforces permissions and sharing.
+            _move_instant_item(child_src, child_dst, journal)
+            moved_children.append((child_src, child_dst))
             completed("MOVE_DIRECTORY_CHILD", child_src, child_dst)
         restore_metadata(dst)
         pending("REMOVE_MOVED_DIRECTORY", src, dst)

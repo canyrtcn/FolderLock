@@ -94,6 +94,21 @@ def test_metadata_handle(exe_path, name):
         with open(photo, "rb") as stream:
             assert stream.read() == content
         safe_fs._CloseHandle(handle)
+        # A COM thumbnail reader can hold GENERIC_READ and FILE_SHARE_DELETE.
+        # Reproduce that real sharing mode across the built EXE boundary.
+        handle = safe_fs._CreateFileW(photo, safe_fs.GENERIC_READ, 7, None, 3, 0, None)
+        assert handle != safe_fs.INVALID_HANDLE_VALUE, ctypes.get_last_error()
+        for action in ("--lock", "--unlock", "--relock", "--unlock"):
+            args = [action, folder, "--quiet"]
+            if action != "--relock":
+                args += ["--password-stdin"]
+            if action == "--lock":
+                args += ["--mode", "instant"]
+            res = run_exe(exe_path, args, stdin_text="Synthetic-binary-password!\n")
+            assert res.returncode == 0, f"{name} shared reader {action}: {res.stdout} {res.stderr}"
+        with open(photo, "rb") as stream:
+            assert stream.read() == content
+        safe_fs._CloseHandle(handle)
         handle = safe_fs._CreateFileW(photo, safe_fs.GENERIC_READ, 3, None, 3, 0, None)
         assert handle != safe_fs.INVALID_HANDLE_VALUE, ctypes.get_last_error()
         res = run_exe(exe_path, ["--lock", folder, "--mode", "instant", "--password-stdin", "--quiet"],
@@ -104,7 +119,7 @@ def test_metadata_handle(exe_path, name):
         res = run_exe(exe_path, ["--recover", os.path.join(temp_dir, "missing"), "--password-stdin", "--quiet"],
                       stdin_text="Synthetic-binary-password!\n")
         assert res.returncode == 1 and "[ERROR]" in res.stdout and "Traceback" not in res.stderr
-        print(f"[{name}] metadata handles, busy reader, and invalid recovery PASSED")
+        print(f"[{name}] metadata/shared-reader lock-unlock-relock, genuine sharing refusal, invalid recovery PASSED")
     finally:
         if handle not in (None, safe_fs.INVALID_HANDLE_VALUE):
             safe_fs._CloseHandle(handle)
