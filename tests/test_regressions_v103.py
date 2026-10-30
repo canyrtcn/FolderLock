@@ -11,7 +11,7 @@ import subprocess
 import hashlib
 
 # Ensure root directory is on python path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 import safe_fs
 from safe_fs import (
@@ -381,7 +381,7 @@ class TestFolderLockV103Regressions(unittest.TestCase):
         """
         worker_code = f"""
 import sys, time
-sys.path.insert(0, r"{os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))}")
+sys.path.insert(0, r"{os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src'))}")
 from safe_fs import acquire_operation_lock
 
 try:

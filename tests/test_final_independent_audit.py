@@ -1,13 +1,11 @@
-"""Independent safety tests for FolderLock-audit-final.zip.
+"""Independent file-safety regressions.
 All filesystem mutations target TemporaryDirectory fixtures, never user folders.
-Some tests intentionally FAIL on the audited version; a pass requires safer behavior.
-Run: FOLDERLOCK_REPO=<extracted_folder> python -m unittest -v FolderLock_final_independent_regressions.py
 """
 import os,sys,json,tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch
 from types import SimpleNamespace
-sys.path.insert(0,os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0,os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 import crypto_engine as ce
 
 class IndependentFinalAudit(unittest.TestCase):

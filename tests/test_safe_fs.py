@@ -11,7 +11,7 @@ import unittest
 import ctypes
 
 # Add root directory to path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 import safe_fs
 from safe_fs import (

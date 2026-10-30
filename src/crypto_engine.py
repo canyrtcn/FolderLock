@@ -63,7 +63,7 @@ from safe_fs import (
     safe_recreate_directories,
     WIN_NO_WINDOW
 )
-from shortcut_prototype import (
+from shell_shortcuts import (
     audit_and_clean_authentic_shortcuts,
     deploy_folderlock_shortcuts,
     SHORTCUT_LOCK_NAME,

@@ -11,7 +11,7 @@ import unittest
 import json
 
 # Add root directory to path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 import config_manager
 from config_manager import ConfigManager, DEFAULT_CONFIG

@@ -151,7 +151,7 @@ ce.lock_folder_instant(str(root),password)
 """
         child = subprocess.run([sys.executable, "-c", code, str(self.root)],
                                input=self.password + "\n", text=True, capture_output=True,
-                               cwd=str(Path(__file__).resolve().parent.parent), timeout=30)
+                               cwd=str(Path(__file__).resolve().parents[1] / "src"), timeout=30)
         self.assertEqual(child.returncode, 73, child.stderr)
         journal = ce.TransactionJournal.load(str(self.root / ce.INSTANT_JOURNAL_FILENAME))
         self.assertTrue(journal.data["move_plan"]["recursive"])

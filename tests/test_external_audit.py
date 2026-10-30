@@ -1,13 +1,6 @@
 """Independent FolderLock data-safety regressions (synthetic files ONLY).
 
-Run from the FolderLock repository:
-    python -m unittest -v /path/to/FolderLock_external_audit_tests.py
-or:
-    set FOLDERLOCK_REPO=C:/path/to/FolderLock
-    python FolderLock_external_audit_tests.py
-
-Expected against the unaudited local working tree: multiple FAIL results.
-A PASS is required for each before release. Never aim these tests at user folders.
+Run with the repository's unittest suite. Never aim these tests at user folders.
 """
 import json
 import os
@@ -17,8 +10,8 @@ import unittest
 import subprocess
 from pathlib import Path
 
-repo = os.environ.get("FOLDERLOCK_REPO", os.getcwd())
-sys.path.insert(0, repo)
+repo = Path(os.environ.get("FOLDERLOCK_REPO", Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(repo / "src"))
 
 import safe_fs
 import crypto_engine

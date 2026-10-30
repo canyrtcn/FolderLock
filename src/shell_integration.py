@@ -36,7 +36,7 @@ def get_app_exe_path() -> str:
     """Returns absolute path to the current FolderLock executable."""
     if getattr(sys, 'frozen', False):
         return os.path.abspath(sys.executable)
-    project_dir = os.path.dirname(os.path.abspath(__file__))
+    project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     for relative_path in (os.path.join("dist", "FolderLock.exe"),
                           os.path.join("dist", "FolderLock_portable", "FolderLock.exe"),
                           "FolderLock.exe"):

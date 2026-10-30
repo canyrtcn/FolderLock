@@ -11,7 +11,7 @@ import unittest
 import subprocess
 
 PYTHON_EXE = sys.executable
-MAIN_PY = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "main.py"))
+MAIN_PY = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src", "main.py"))
 
 # Keep CLI version expectations aligned with the shared application version.
 sys.path.insert(0, os.path.dirname(MAIN_PY))

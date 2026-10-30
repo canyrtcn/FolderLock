@@ -5,12 +5,13 @@ import subprocess
 import shutil
 import ctypes
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 import safe_fs
 from translations import APP_VERSION
 
-ONEFILE_EXE = os.path.abspath("dist/FolderLock.exe")
-PORTABLE_EXE = os.path.abspath("dist/FolderLock_portable/FolderLock.exe")
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+ONEFILE_EXE = os.path.join(PROJECT_ROOT, "dist", "FolderLock.exe")
+PORTABLE_EXE = os.path.join(PROJECT_ROOT, "dist", "FolderLock_portable", "FolderLock.exe")
 
 def run_exe(exe_path, args, stdin_text=None):
     cmd = [exe_path] + args

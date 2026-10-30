@@ -153,7 +153,7 @@ class InFolderUnlockApp(ctk.CTk):
         self.lbl_status.pack(pady=(0, 4))
 
     def _set_icon(self):
-        base_dir = sys._MEIPASS if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS') else os.path.dirname(__file__)
+        base_dir = sys._MEIPASS if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS') else os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'assets')
         icon_path = os.path.join(base_dir, "icon.ico")
         if os.path.exists(icon_path):
             try:
@@ -310,7 +310,7 @@ class InFolderLockApp(ctk.CTk):
         self._render_view()
 
     def _set_icon(self):
-        base_dir = sys._MEIPASS if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS') else os.path.dirname(__file__)
+        base_dir = sys._MEIPASS if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS') else os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'assets')
         icon_path = os.path.join(base_dir, "icon.ico")
         if os.path.exists(icon_path):
             try:
@@ -569,7 +569,7 @@ class FolderLockApp(ctk.CTk):
         self._check_cli_args()
 
     def _set_icon(self):
-        base_dir = sys._MEIPASS if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS') else os.path.dirname(__file__)
+        base_dir = sys._MEIPASS if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS') else os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'assets')
         icon_path = os.path.join(base_dir, "icon.ico")
         if os.path.exists(icon_path):
             try:

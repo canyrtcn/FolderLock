@@ -1,7 +1,6 @@
-"""Windows Shell Link proof-of-concept. Not installed into FolderLock automatically.
+"""Native Windows Shell Links for FolderLock's in-folder lock/unlock actions.
 
-Uses only Windows COM; no PowerShell, WScript, copied executables, or scripts.
-Prototype only: not yet integrated with AES/Instant state machines.
+Uses Windows COM, central executable references, and ownership validation.
 """
 
 import ctypes

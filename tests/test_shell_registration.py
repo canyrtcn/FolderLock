@@ -151,11 +151,27 @@ class ShellRegistrationTests(unittest.TestCase):
         previous_cwd = os.getcwd()
         try:
             os.chdir(self.folder)
-            with patch.object(shell, "__file__", str(project / "shell_integration.py")), \
+            with patch.object(shell, "__file__", str(project / "src" / "shell_integration.py")), \
                     patch.object(shell, "sys", SimpleNamespace(frozen=False, executable="python.exe")):
                 self.assertEqual(shell.get_app_exe_path(), str(built_exe))
         finally:
             os.chdir(previous_cwd)
+
+    def test_source_mode_without_build_registers_python_with_src_entrypoint(self):
+        project = self.folder / "fresh source checkout"
+        source = project / "src"
+        source.mkdir(parents=True)
+        script = source / "main.py"
+        script.write_text("# synthetic source entrypoint\n", encoding="utf-8")
+        interpreter = self.folder / "python.exe"
+        interpreter.touch()
+        with patch.object(shell, "__file__", str(source / "shell_integration.py")), \
+                patch.object(shell, "sys", SimpleNamespace(frozen=False, executable=str(interpreter))):
+            self.assertEqual(shell.get_app_exe_path(), str(interpreter))
+            ok, message = shell.setup_shell_integration()
+            self.assertTrue(ok, message)
+            self.assertEqual(self.read_value(shell.MENU_KEY + r"\command"),
+                             f'"{interpreter}" "{script}" "%1"')
 
 
 if __name__ == "__main__":

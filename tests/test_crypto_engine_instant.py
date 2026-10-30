@@ -11,7 +11,7 @@ import unittest
 import hashlib
 
 # Add root directory to path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 import crypto_engine
 from crypto_engine import (

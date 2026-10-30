@@ -19,7 +19,7 @@ import unittest
 
 import crypto_engine
 import safe_fs
-import shortcut_prototype
+import shell_shortcuts
 from shell_integration import get_app_exe_path
 
 
@@ -73,32 +73,32 @@ class TestShortcutIntegration(unittest.TestCase):
 
     def test_authentic_shortcut_verification(self):
         # 1. Genuine shortcuts created for this folder
-        self.assertTrue(shortcut_prototype.create_prototype(self.folder, self.exe, "lock"))
-        self.assertTrue(shortcut_prototype.create_prototype(self.folder, self.exe, "unlock"))
+        self.assertTrue(shell_shortcuts.create_prototype(self.folder, self.exe, "lock"))
+        self.assertTrue(shell_shortcuts.create_prototype(self.folder, self.exe, "unlock"))
 
-        lock_path = os.path.join(self.folder, shortcut_prototype.SHORTCUT_LOCK_NAME)
-        unlock_path = os.path.join(self.folder, shortcut_prototype.SHORTCUT_UNLOCK_NAME)
+        lock_path = os.path.join(self.folder, shell_shortcuts.SHORTCUT_LOCK_NAME)
+        unlock_path = os.path.join(self.folder, shell_shortcuts.SHORTCUT_UNLOCK_NAME)
 
-        self.assertTrue(shortcut_prototype.is_authentic_folderlock_shortcut(lock_path, self.folder, "lock"))
-        self.assertTrue(shortcut_prototype.is_authentic_folderlock_shortcut(unlock_path, self.folder, "unlock"))
-        self.assertFalse(shortcut_prototype.is_authentic_folderlock_shortcut(lock_path, self.folder, "unlock"))
+        self.assertTrue(shell_shortcuts.is_authentic_folderlock_shortcut(lock_path, self.folder, "lock"))
+        self.assertTrue(shell_shortcuts.is_authentic_folderlock_shortcut(unlock_path, self.folder, "unlock"))
+        self.assertFalse(shell_shortcuts.is_authentic_folderlock_shortcut(lock_path, self.folder, "unlock"))
 
         # 2. Tampered arguments: shortcut pointing to different folder
         other_folder = os.path.join(self.test_root, "OtherFolder")
         os.makedirs(other_folder, exist_ok=True)
-        other_link = os.path.join(other_folder, shortcut_prototype.SHORTCUT_LOCK_NAME)
-        self.assertTrue(shortcut_prototype.create_prototype(other_folder, self.exe, "lock"))
-        self.assertFalse(shortcut_prototype.is_authentic_folderlock_shortcut(other_link, self.folder, "lock"))
+        other_link = os.path.join(other_folder, shell_shortcuts.SHORTCUT_LOCK_NAME)
+        self.assertTrue(shell_shortcuts.create_prototype(other_folder, self.exe, "lock"))
+        self.assertFalse(shell_shortcuts.is_authentic_folderlock_shortcut(other_link, self.folder, "lock"))
 
         # 3. Non-shortcut text file with shortcut name
         fake_path = os.path.join(self.folder, "fake.lnk")
         with open(fake_path, "wb") as f:
             f.write(b"NOT A SHELL LINK FILE")
-        self.assertFalse(shortcut_prototype.is_authentic_folderlock_shortcut(fake_path, self.folder))
+        self.assertFalse(shell_shortcuts.is_authentic_folderlock_shortcut(fake_path, self.folder))
 
     def test_preflight_refuses_user_file_collision_instant(self):
         # Place non-authentic user data named FolderLock - Lock.lnk in folder
-        user_file = os.path.join(self.folder, shortcut_prototype.SHORTCUT_LOCK_NAME)
+        user_file = os.path.join(self.folder, shell_shortcuts.SHORTCUT_LOCK_NAME)
         user_content = b"USER SECRET DATA - MUST NEVER BE LOST OR EXCLUDED"
         with open(user_file, "wb") as f:
             f.write(user_content)
@@ -115,7 +115,7 @@ class TestShortcutIntegration(unittest.TestCase):
 
     def test_preflight_refuses_user_file_collision_aes(self):
         # Place non-authentic user data named FolderLock - Unlock.lnk in folder
-        user_file = os.path.join(self.folder, shortcut_prototype.SHORTCUT_UNLOCK_NAME)
+        user_file = os.path.join(self.folder, shell_shortcuts.SHORTCUT_UNLOCK_NAME)
         user_content = b"USER SECRET DATA - AES PRESERVATION TEST"
         with open(user_file, "wb") as f:
             f.write(user_content)
@@ -140,8 +140,8 @@ class TestShortcutIntegration(unittest.TestCase):
 
             # Check locked folder contents
             locked_items = os.listdir(self.folder)
-            self.assertIn(shortcut_prototype.SHORTCUT_LOCK_NAME, locked_items)
-            self.assertIn(shortcut_prototype.SHORTCUT_UNLOCK_NAME, locked_items)
+            self.assertIn(shell_shortcuts.SHORTCUT_LOCK_NAME, locked_items)
+            self.assertIn(shell_shortcuts.SHORTCUT_UNLOCK_NAME, locked_items)
             # Ensure no user files leaked into root
             self.assertNotIn("notes.txt", locked_items)
             self.assertNotIn("data.bin", locked_items)
@@ -160,10 +160,10 @@ class TestShortcutIntegration(unittest.TestCase):
             self._verify_synthetic_files(hashes)
 
             # Verify shortcuts remain authentic
-            lock_p = os.path.join(self.folder, shortcut_prototype.SHORTCUT_LOCK_NAME)
-            unlock_p = os.path.join(self.folder, shortcut_prototype.SHORTCUT_UNLOCK_NAME)
-            self.assertTrue(shortcut_prototype.is_authentic_folderlock_shortcut(lock_p, self.folder, "lock"))
-            self.assertTrue(shortcut_prototype.is_authentic_folderlock_shortcut(unlock_p, self.folder, "unlock"))
+            lock_p = os.path.join(self.folder, shell_shortcuts.SHORTCUT_LOCK_NAME)
+            unlock_p = os.path.join(self.folder, shell_shortcuts.SHORTCUT_UNLOCK_NAME)
+            self.assertTrue(shell_shortcuts.is_authentic_folderlock_shortcut(lock_p, self.folder, "lock"))
+            self.assertTrue(shell_shortcuts.is_authentic_folderlock_shortcut(unlock_p, self.folder, "unlock"))
 
     def test_e2e_aes_lock_10_cycles_no_duplication(self):
         hashes = self._create_synthetic_files()
@@ -175,8 +175,8 @@ class TestShortcutIntegration(unittest.TestCase):
 
             # Check locked folder contents
             locked_items = os.listdir(self.folder)
-            self.assertIn(shortcut_prototype.SHORTCUT_LOCK_NAME, locked_items)
-            self.assertIn(shortcut_prototype.SHORTCUT_UNLOCK_NAME, locked_items)
+            self.assertIn(shell_shortcuts.SHORTCUT_LOCK_NAME, locked_items)
+            self.assertIn(shell_shortcuts.SHORTCUT_UNLOCK_NAME, locked_items)
             self.assertIn("FolderLock_Instructions.txt", locked_items)
             self.assertNotIn("notes.txt", locked_items)
             self.assertNotIn("data.bin", locked_items)
@@ -195,10 +195,10 @@ class TestShortcutIntegration(unittest.TestCase):
             self._verify_synthetic_files(hashes)
 
             # Verify shortcuts remain authentic
-            lock_p = os.path.join(self.folder, shortcut_prototype.SHORTCUT_LOCK_NAME)
-            unlock_p = os.path.join(self.folder, shortcut_prototype.SHORTCUT_UNLOCK_NAME)
-            self.assertTrue(shortcut_prototype.is_authentic_folderlock_shortcut(lock_p, self.folder, "lock"))
-            self.assertTrue(shortcut_prototype.is_authentic_folderlock_shortcut(unlock_p, self.folder, "unlock"))
+            lock_p = os.path.join(self.folder, shell_shortcuts.SHORTCUT_LOCK_NAME)
+            unlock_p = os.path.join(self.folder, shell_shortcuts.SHORTCUT_UNLOCK_NAME)
+            self.assertTrue(shell_shortcuts.is_authentic_folderlock_shortcut(lock_p, self.folder, "lock"))
+            self.assertTrue(shell_shortcuts.is_authentic_folderlock_shortcut(unlock_p, self.folder, "unlock"))
 
     def test_quick_relock_flow_with_shortcuts(self):
         hashes = self._create_synthetic_files()
@@ -214,8 +214,8 @@ class TestShortcutIntegration(unittest.TestCase):
 
         # Shortcuts present while locked
         locked_items = os.listdir(self.folder)
-        self.assertIn(shortcut_prototype.SHORTCUT_LOCK_NAME, locked_items)
-        self.assertIn(shortcut_prototype.SHORTCUT_UNLOCK_NAME, locked_items)
+        self.assertIn(shell_shortcuts.SHORTCUT_LOCK_NAME, locked_items)
+        self.assertIn(shell_shortcuts.SHORTCUT_UNLOCK_NAME, locked_items)
 
         # 3. Unlock again
         self.assertTrue(crypto_engine.unlock_folder_instant(self.folder, self.password))
@@ -225,16 +225,16 @@ class TestShortcutIntegration(unittest.TestCase):
         target_file = os.path.join(self.test_root, "dummy.txt")
         with open(target_file, "w") as f:
             f.write("target")
-        symlink_path = os.path.join(self.folder, shortcut_prototype.SHORTCUT_LOCK_NAME)
+        symlink_path = os.path.join(self.folder, shell_shortcuts.SHORTCUT_LOCK_NAME)
         try:
             os.symlink(target_file, symlink_path)
         except (OSError, NotImplementedError):
             # SeCreateSymbolicLinkPrivilege might not be available for non-elevated user
             return
 
-        self.assertFalse(shortcut_prototype.is_authentic_folderlock_shortcut(symlink_path, self.folder, "lock"))
+        self.assertFalse(shell_shortcuts.is_authentic_folderlock_shortcut(symlink_path, self.folder, "lock"))
         with self.assertRaises(crypto_engine.CryptoError):
-            shortcut_prototype.audit_and_clean_authentic_shortcuts(self.folder)
+            shell_shortcuts.audit_and_clean_authentic_shortcuts(self.folder)
 
 
 if __name__ == "__main__":

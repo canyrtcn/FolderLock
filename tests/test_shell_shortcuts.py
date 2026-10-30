@@ -1,4 +1,4 @@
-"""Isolated Windows-only Shell Link prototype tests. No existing user folders."""
+"""Isolated native Windows Shell Link tests. No existing user folders."""
 import os
 import subprocess
 import sys
@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from shortcut_prototype import create_prototype, inspect_prototype
+from shell_shortcuts import create_prototype, inspect_prototype
 
 
 @unittest.skipUnless(os.name == 'nt', 'Windows COM required')

@@ -21,7 +21,7 @@ class VersionSettingsTests(unittest.TestCase):
             set_current_lang(previous)
 
     def test_version_matches_windows_executable_metadata(self):
-        info = (ROOT / "version_info.txt").read_text(encoding="utf-8")
+        info = (ROOT / "packaging" / "version_info.txt").read_text(encoding="utf-8")
         parts = tuple(map(int, APP_VERSION.split(".")))
         self.assertEqual(len(parts), 3)
         expected_tuple = f"({parts[0]}, {parts[1]}, {parts[2]}, 0)"
@@ -30,7 +30,7 @@ class VersionSettingsTests(unittest.TestCase):
         self.assertIn(f"StringStruct('ProductVersion', '{APP_VERSION}')", info)
 
     def test_gui_settings_row_and_language_refresh_present(self):
-        source = (ROOT / "main.py").read_text(encoding="utf-8")
+        source = (ROOT / "src" / "main.py").read_text(encoding="utf-8")
         ast.parse(source)
         self.assertIn("self.lbl_s_version = ctk.CTkLabel(", source)
         self.assertIn("self.lbl_s_version_val = ctk.CTkLabel(", source)
