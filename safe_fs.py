@@ -413,14 +413,10 @@ def move_no_replace(src: str, dst: str):
     src = os.path.abspath(src)
     dst = os.path.abspath(dst)
 
-    if not is_same_volume(src, dst):
+    # Both paths are already absolute. Avoid resolving them a second time for
+    # every entry in a large Instant Lock batch.
+    if os.path.splitdrive(src)[0].upper() != os.path.splitdrive(dst)[0].upper():
         raise SafeFSError(f"Cross-volume move refused between {src} and {dst}")
-
-    if os.path.lexists(dst):
-        raise FileExistsError(f"Destination already exists: {dst}")
-
-    if not os.path.lexists(src):
-        raise FileNotFoundError(f"Source does not exist: {src}")
 
     if os.name == 'nt':
         # MoveFileExW with MOVEFILE_WRITE_THROUGH (0x8): atomic flush, no overwrite, no copy
@@ -428,7 +424,10 @@ def move_no_replace(src: str, dst: str):
         ret = _MoveFileExW(src, dst, flags)
         if not ret:
             err = ctypes.get_last_error()
-            if err in (ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS):
+            # Let the atomic API enforce existence/no-replacement. Probing
+            # both paths before every successful move adds I/O and cannot
+            # prevent races. Check a conflicting destination only on failure.
+            if err in (ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS) or os.path.lexists(dst):
                 raise FileExistsError(f"Destination already exists: {dst}")
             elif err == ERROR_NOT_SAME_DEVICE:
                 raise SafeFSError(f"Cross-volume move refused between {src} and {dst}")
@@ -442,6 +441,8 @@ def move_no_replace(src: str, dst: str):
     else:
         if os.path.lexists(dst):
             raise FileExistsError(f"Destination already exists: {dst}")
+        if not os.path.lexists(src):
+            raise FileNotFoundError(f"Source does not exist: {src}")
         os.rename(src, dst)
 
     if not os.path.lexists(dst) or os.path.lexists(src):

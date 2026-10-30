@@ -1161,14 +1161,43 @@ class TransactionJournal:
         self.data["state"] = state
         self.save()
 
+    def begin_instant_moves(self, source: str, destination: str, items: List[str]):
+        """Durably cover all recursive moves before their first mutation.
+
+        Native no-replace moves leave each entry at either its original path
+        or the authenticated container. That custody rule permits a single
+        write-ahead batch intent; recovery can inspect both locations after a
+        crash. Per-file JSON rewrites provide no additional custody guarantee.
+        AES deletion/verification journals continue to flush every step.
+        """
+        if self.data.get("operation_type") != "instant_lock":
+            raise CryptoError("Bulk moves are only supported for Instant Lock.")
+        self.data["move_plan"] = {
+            "source": os.path.abspath(source),
+            "destination": os.path.abspath(destination),
+            "items": list(items),
+            "recursive": True,
+            "no_replace": True,
+        }
+        self.data["completed_step_count"] = 0
+        self.set_state("MOVING_ITEMS")
+        self._bulk_instant_moves = True
+
     def record_pending_step(self, step: Dict[str, Any]):
         self.data["pending_step"] = step
-        self.save()
+        if not getattr(self, "_bulk_instant_moves", False):
+            self.save()
 
     def record_completed_step(self, step_result: Dict[str, Any]):
-        self.data["completed_steps"].append(step_result)
+        bulk_moves = getattr(self, "_bulk_instant_moves", False)
+        if bulk_moves:
+            self.data["last_completed_step"] = step_result
+            self.data["completed_step_count"] += 1
+        else:
+            self.data["completed_steps"].append(step_result)
         self.data["pending_step"] = None
-        self.save()
+        if not bulk_moves:
+            self.save()
 
     def add_temp_path(self, path: str):
         if path not in self.data["temp_paths"]:
@@ -1737,8 +1766,9 @@ def _move_instant_item(src: str, dst: str,
                                            "dst": target, "status": "DONE"})
 
     def restore_metadata(path):
-        if not restore_security_descriptor_sddl(path, src_sddl):
-            raise SafeFSError(f"Cannot preserve directory permissions: {path}")
+        # Each newly created directory receives its original DACL before any
+        # children arrive. Applying it again here needlessly walks descendants
+        # to propagate inheritance and can turn unlock into another full scan.
         handle = safe_fs._CreateFileW(path, 0x100, 7, None, 3, 0x02000000, None)
         if handle == safe_fs.INVALID_HANDLE_VALUE:
             raise ctypes.WinError(ctypes.get_last_error())
@@ -1765,17 +1795,23 @@ def _move_instant_item(src: str, dst: str,
         if not restore_security_descriptor_sddl(dst, src_sddl):
             raise SafeFSError(f"Cannot preserve directory permissions: {dst}")
         completed("CREATE_MOVE_DIRECTORY", src, dst)
-        for name in os.listdir(src):
-            child_src, child_dst = os.path.join(src, name), os.path.join(dst, name)
-            if safe_fs.is_reparse_point(child_src):
+        # Find data already carries Windows attributes. Close the enumeration
+        # before moving anything, and avoid several attribute syscalls per file.
+        with os.scandir(src) as iterator:
+            children = list(iterator)
+        for entry in children:
+            child_src, child_dst = entry.path, os.path.join(dst, entry.name)
+            attributes = entry.stat(follow_symlinks=False).st_file_attributes
+            if attributes & safe_fs.FILE_ATTRIBUTE_REPARSE_POINT:
                 raise SafeFSError(f"Refusing directory fallback through reparse point: {child_src}")
-            pending("MOVE_DIRECTORY_CHILD", child_src, child_dst)
             # Honor native rename sharing. Explorer thumbnail readers can
             # allow FILE_SHARE_DELETE while an exclusive read probe rejects
             # them. MoveFileExW itself enforces permissions and sharing.
-            _move_instant_item(child_src, child_dst, journal)
+            # The durable batch plan already covers children, including any
+            # nested fallbacks. Keep rollback tracking in memory; a crash
+            # leaves the plan and authenticated container available to recovery.
+            _move_instant_item(child_src, child_dst)
             moved_children.append((child_src, child_dst))
-            completed("MOVE_DIRECTORY_CHILD", child_src, child_dst)
         restore_metadata(dst)
         pending("REMOVE_MOVED_DIRECTORY", src, dst)
         os.rmdir(src)  # Only an empty directory may be removed.
@@ -1885,7 +1921,7 @@ def lock_folder_instant(folder_path: str, password: Optional[str] = None,
 
         instant_journal_path = os.path.join(folder_path, INSTANT_JOURNAL_FILENAME)
         journal = TransactionJournal(instant_journal_path, op_lock.operation_id, "instant_lock", folder_path)
-        journal.set_state("MOVING_ITEMS")
+        journal.begin_instant_moves(folder_path, locked_data_dir, items_to_lock)
 
         if progress_callback:
             progress_callback(0.4, "Securing items into container...")

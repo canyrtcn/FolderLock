@@ -13,6 +13,7 @@
 
 ## Highlights
 
+- **Faster Instant Lock (v1.0.8):** one durable recursive move plan replaces repeated per-file JSON journal rewrites. In a synthetic 1,036-file test with a shared reader open, lock time fell from about 12.2 seconds to 0.8 seconds and cumulative journal JSON writes fell from about 333 MiB to 2.3 KiB. Crash recovery and no-overwrite checks remain covered by regression tests. [Release details](docs/release-v1.0.8.md).
 - **Explorer re-lock fixes (v1.0.7):** thumbnail readers that permit native rename sharing no longer cause a false `WinError 32`. Explorer launches for unlocked folders always select **Lock Folder**, including folders with saved re-lock settings.
 - **Windows lock reliability (v1.0.6):** Instant Lock handles Windows metadata and thumbnail handles that prevent whole-directory renames. A journaled fallback moves individual entries on the same volume without rewriting file contents and restores them if a move fails.
 - **Portable Explorer registration (v1.0.6):** right-click integration uses the running executable's location. Launching an updated or relocated EXE refreshes an existing FolderLock registration; users who disabled integration keep it disabled.
@@ -45,7 +46,9 @@
 
 ### Instant Lock
 
-FolderLock creates an internal `.locked_data` container, stores verification metadata in `.flock_meta`, moves the folder contents into that container transactionally, then applies hidden/system attributes and an NTFS deny ACE using universal SID `*S-1-1-0` (`Everyone`). If any step fails, the operation rolls back cleanly with zero data loss.
+FolderLock creates an internal `.locked_data` container, stores verification metadata in `.flock_meta`, moves the folder contents into that container transactionally, then applies hidden/system attributes and an NTFS deny ACE using universal SID `*S-1-1-0` (`Everyone`). Moves use no-replace semantics. If a move fails, FolderLock attempts rollback; interrupted operations and incomplete rollbacks preserve the container and recovery metadata.
+
+Starting with v1.0.8, Instant Lock writes its recursive move intent before moving any entry and records a final checkpoint after protection is applied. Native same-volume moves keep each file at its source or in the authenticated container. This removes growing per-file journal rewrites while preserving rollback and password-gated recovery. AES archive verification and deletion journals keep their existing per-step checkpoints.
 
 #### Administrator Manual Recovery Procedure (If Metadata Lost)
 If `.flock_meta` is permanently corrupted or deleted by external utilities:
