@@ -30,3 +30,18 @@ ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 .DS_Store
+
+# Local release packages and validation logs can contain machine-specific data.
+*.zip
+SHA256SUMS*.txt
+build_verification*.txt
+gui_validation_report.txt
+relock_scenarios_report.txt
+test_*.txt
+codex-clipboard-*.png
+
+# Local credentials must never be packaged with the source.
+.env
+.env.*
+secrets/
+credentials*.json

@@ -1693,6 +1693,126 @@ def unlock_folder(folder_path: str, password: str,
 
 # ---------------- INSTANT LOCK OPERATION (NTFS ACL + METADATA CONTAINER) ----------------
 
+def _move_instant_item(src: str, dst: str,
+                       journal: Optional[TransactionJournal] = None):
+    """Move without replacement, with a reversible Windows directory fallback.
+
+    An open metadata-only handle on a descendant can block a directory rename
+    with ERROR_ACCESS_DENIED even though every individual file is movable.
+    Keep the atomic fast path; on that specific failure recreate the directory
+    from its Windows template (including streams), then rename its children.
+    Never copy file contents, relax permissions, or ignore a sharing violation.
+    """
+    try:
+        move_no_replace(src, dst)
+        return
+    except PermissionError as exc:
+        if (os.name != "nt" or getattr(exc, "winerror", None) != 5
+                or not os.path.isdir(src) or safe_fs.is_reparse_point(src)
+                or os.path.lexists(dst)):
+            raise
+
+    src_stat = os.stat(src, follow_symlinks=False)
+    src_attrs = get_file_attributes_safe(src)
+    src_sddl = get_security_descriptor_sddl(src)
+    if not src_sddl:
+        raise SafeFSError(f"Cannot preserve directory permissions: {src}")
+
+    from ctypes import wintypes
+    create_directory = safe_fs._k32.CreateDirectoryExW
+    create_directory.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.LPVOID]
+    create_directory.restype = wintypes.BOOL
+    set_file_time = safe_fs._k32.SetFileTime
+    set_file_time.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.FILETIME),
+                             ctypes.POINTER(wintypes.FILETIME), ctypes.POINTER(wintypes.FILETIME)]
+    set_file_time.restype = wintypes.BOOL
+
+    def pending(action, source, target):
+        if journal:
+            journal.record_pending_step({"action": action, "src": source, "dst": target})
+
+    def completed(action, source, target):
+        if journal:
+            journal.record_completed_step({"action": action, "src": source,
+                                           "dst": target, "status": "DONE"})
+
+    def restore_metadata(path):
+        if not restore_security_descriptor_sddl(path, src_sddl):
+            raise SafeFSError(f"Cannot preserve directory permissions: {path}")
+        handle = safe_fs._CreateFileW(path, 0x100, 7, None, 3, 0x02000000, None)
+        if handle == safe_fs.INVALID_HANDLE_VALUE:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            times = []
+            birthtime_ns = getattr(src_stat, "st_birthtime_ns", src_stat.st_ctime_ns)
+            for value in (birthtime_ns, src_stat.st_atime_ns, src_stat.st_mtime_ns):
+                ticks = value // 100 + 116444736000000000
+                times.append(wintypes.FILETIME(ticks & 0xFFFFFFFF, ticks >> 32))
+            if not set_file_time(handle, *(ctypes.byref(value) for value in times)):
+                raise ctypes.WinError(ctypes.get_last_error())
+        finally:
+            safe_fs._CloseHandle(handle)
+        if not safe_fs._SetFileAttributesW(path, src_attrs):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    moved_children = []
+    created = False
+    try:
+        pending("CREATE_MOVE_DIRECTORY", src, dst)
+        if not create_directory(src, dst, None):
+            raise ctypes.WinError(ctypes.get_last_error())
+        created = True
+        if not restore_security_descriptor_sddl(dst, src_sddl):
+            raise SafeFSError(f"Cannot preserve directory permissions: {dst}")
+        completed("CREATE_MOVE_DIRECTORY", src, dst)
+        for name in os.listdir(src):
+            child_src, child_dst = os.path.join(src, name), os.path.join(dst, name)
+            if safe_fs.is_reparse_point(child_src):
+                raise SafeFSError(f"Refusing directory fallback through reparse point: {child_src}")
+            pending("MOVE_DIRECTORY_CHILD", child_src, child_dst)
+            # Attribute-only handles remain compatible. An active data reader
+            # or writer must close the file before protection can proceed.
+            handle = None
+            if not os.path.isdir(child_src):
+                handle = safe_fs._CreateFileW(child_src, safe_fs.GENERIC_READ,
+                                               4, None, 3, 0x00200000, None)
+                if handle == safe_fs.INVALID_HANDLE_VALUE:
+                    raise PermissionError(13, "File in use or access denied; close applications using this file",
+                                          child_src, ctypes.get_last_error())
+            try:
+                _move_instant_item(child_src, child_dst, journal)
+                moved_children.append((child_src, child_dst))
+            finally:
+                if handle is not None:
+                    safe_fs._CloseHandle(handle)
+            completed("MOVE_DIRECTORY_CHILD", child_src, child_dst)
+        restore_metadata(dst)
+        pending("REMOVE_MOVED_DIRECTORY", src, dst)
+        os.rmdir(src)  # Only an empty directory may be removed.
+        completed("REMOVE_MOVED_DIRECTORY", src, dst)
+    except Exception as exc:
+        rollback_errors = []
+        if created:
+            try:
+                if not os.path.lexists(src):
+                    if not create_directory(dst, src, None):
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    if not restore_security_descriptor_sddl(src, src_sddl):
+                        raise SafeFSError(f"Cannot restore directory permissions: {src}")
+                for child_src, child_dst in reversed(moved_children):
+                    _move_instant_item(child_dst, child_src)
+                os.rmdir(dst)
+                restore_metadata(src)
+            except Exception as rollback_exc:
+                rollback_errors.append(str(rollback_exc))
+        if rollback_errors:
+            raise SafeFSError(
+                f"Directory move rollback incomplete; source and destination preserved. "
+                f"Recovery required: {exc}; {'; '.join(rollback_errors)}"
+            ) from exc
+        raise
+
+
 def lock_folder_instant(folder_path: str, password: Optional[str] = None,
                         salt_hex: Optional[str] = None, hash_val: Optional[str] = None,
                         progress_callback: Optional[Callable[[float, str], None]] = None) -> Tuple[str, str]:
@@ -1791,23 +1911,30 @@ def lock_folder_instant(folder_path: str, password: Optional[str] = None,
                     "src": src,
                     "dst": dst
                 })
-                move_no_replace(src, dst)
+                # Track the attempted item before moving or saving completion:
+                # either step can fail after part or all of the data has moved.
+                moved_items.append((src, dst))
+                _move_instant_item(src, dst, journal)
                 journal.record_completed_step({
                     "action": "MOVE_TO_CONTAINER",
                     "src": src,
                     "dst": dst,
                     "status": "MOVED"
                 })
-                moved_items.append((src, dst))
         except Exception as e:
             # Strict verified rollback: move back each completed item
             rollback_failed = False
             for orig_src, moved_dst in reversed(moved_items):
                 try:
                     if os.path.lexists(moved_dst):
-                        move_no_replace(moved_dst, orig_src)
+                        _move_instant_item(moved_dst, orig_src)
+                    if not os.path.lexists(orig_src):
+                        raise SafeFSError(f"Item missing after rollback: {orig_src}")
                 except Exception:
                     rollback_failed = True
+
+            if any(name != META_FILENAME for name in os.listdir(locked_data_dir)):
+                rollback_failed = True
 
             if rollback_failed:
                 journal.mark_recovery_required("Rollback move failed.")
@@ -1832,7 +1959,7 @@ def lock_folder_instant(folder_path: str, password: Optional[str] = None,
             for orig_src, moved_dst in reversed(moved_items):
                 try:
                     if os.path.lexists(moved_dst):
-                        move_no_replace(moved_dst, orig_src)
+                        _move_instant_item(moved_dst, orig_src)
                 except Exception as ex:
                     rollback_failed = True
                     rollback_errors.append(f"{moved_dst} -> {orig_src}: {ex}")
@@ -1977,7 +2104,7 @@ def unlock_folder_instant(folder_path: str, password: str,
                 continue
             src = os.path.join(locked_data_dir, item)
             dst = resolve_collision(folder_path, item)
-            move_no_replace(src, dst)
+            _move_instant_item(src, dst)
 
         # Remove metadata only after all items are successfully restored
         remove_verified_file(meta_path, allowed_names={META_FILENAME})
@@ -2082,7 +2209,7 @@ def recover_instant_folder(folder_path: str, password: Optional[str] = None) -> 
             src = os.path.join(locked_data_dir, item)
             dst = resolve_collision(folder_path, item)
             try:
-                move_no_replace(src, dst)
+                _move_instant_item(src, dst)
                 restored_count += 1
             except Exception as ex:
                 restore_failed = True

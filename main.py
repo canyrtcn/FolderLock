@@ -41,7 +41,10 @@ from translations import t, set_current_lang, get_current_lang, APP_VERSION
 from config_manager import ConfigManager
 from ui_dialogs import ModernPasswordDialog, HelpDialog
 from ui_icons import get_theme_image, get_eye_image
-from shell_integration import setup_shell_integration, remove_shell_integration, is_shell_integration_enabled
+from shell_integration import (
+    setup_shell_integration, remove_shell_integration,
+    is_shell_integration_enabled, refresh_shell_integration,
+)
 
 
 class InFolderUnlockApp(ctk.CTk):
@@ -1815,7 +1818,10 @@ def main():
                 _show_quick_dialog(t("dialog_error"), "Password was not provided.", is_error=True)
             sys.exit(1)
 
-        success, msg = recover_folder(target, password=pwd)
+        try:
+            success, msg = recover_folder(target, password=pwd)
+        except Exception as e:
+            success, msg = False, str(e)
         if is_quiet:
             print(f"[{'SUCCESS' if success else 'ERROR'}] {msg}")
             sys.exit(0 if success else 1)
@@ -1928,6 +1934,11 @@ def main():
             app = InFolderLockApp(target)
             app.mainloop()
             return
+
+    # A portable update may have moved the EXE. Repair only registrations the
+    # user already enabled; headless CLI operations leave associations alone.
+    if getattr(sys, "frozen", False):
+        refresh_shell_integration()
 
     # Direct path argument (e.g. from Explorer right-click "%1" or drag-and-drop onto exe)
     target_path = parsed_args.target_path

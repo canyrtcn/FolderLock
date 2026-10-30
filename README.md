@@ -13,6 +13,8 @@
 
 ## Highlights
 
+- **Windows lock reliability (v1.0.6):** Instant Lock handles Windows metadata and thumbnail handles that prevent whole-directory renames. A journaled fallback moves individual entries on the same volume without rewriting file contents and restores them if a move fails.
+- **Portable Explorer registration (v1.0.6):** right-click integration uses the running executable's location. Launching an updated or relocated EXE refreshes an existing FolderLock registration; users who disabled integration keep it disabled.
 - **Instant Lock (SSD-friendly):** restricts folder access without rewriting protected file contents. Moves entries into an internal container and applies Windows hidden/system attributes plus an NTFS deny ACE.
 - **Deep AES-256-GCM (FLCK03):** streams the folder into an authenticated encrypted vault using AES-256-GCM with PBKDF2-HMAC-SHA256 (300,000 iterations). Each chunk binds sequence index, length, and termination flags in Associated Authenticated Data (AAD).
 - **Transactional State Machine:** persistent journal (`.flock_journal`) tracks encryption and commit states. Source files are safely removed only after complete end-to-end archive and authentication tag verification.
@@ -124,6 +126,21 @@ pyinstaller FolderLock.spec --clean
 ```
 
 The executable is generated under `dist/`.
+
+### Windows regression tests
+
+```bash
+python -m unittest discover -s tests -v
+python tests/test_e2e_binaries.py
+```
+
+The binary checks require both `FolderLock.spec` and `FolderLock_onedir.spec` to be built first. Filesystem tests use synthetic temporary folders; shell-registration tests use an isolated temporary registry subtree.
+
+### Troubleshooting Instant Lock
+
+Windows can return `WinError 5` for a directory move even when an open child-file handle only queries metadata. FolderLock v1.0.6 keeps the fast directory move and falls back to reversible entry-by-entry moves for this case. Directory streams, timestamps, attributes, and permissions are preserved by the fallback. Real data readers/writers and insufficient permissions still produce an error; close the application using the file and retry.
+
+Explorer integration always points to a specific executable on disk. Extract the portable package to its intended location before enabling integration. After moving or updating FolderLock, run the new executable once to refresh an existing right-click registration, or enable integration in Settings. No administrator rights are needed. In-folder shortcuts continue to reference their original executable; keeping that executable at the same path preserves existing shortcuts.
 
 ## Kullanım Kılavuzu (Türkçe)
 

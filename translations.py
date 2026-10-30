@@ -6,7 +6,7 @@ Supports English (default) and Turkish.
 from typing import Dict, Any
 
 # One source for displayed application version across GUI and CLI.
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 
 TRANSLATIONS: Dict[str, Dict[str, str]] = {
     "en": {

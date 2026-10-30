@@ -46,6 +46,16 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(res.returncode, 1)
         self.assertIn("[ERROR] Password is required", res.stdout)
 
+    def test_cli_recovery_invalid_path_reports_error_without_traceback(self):
+        target = os.path.join(self.test_dir, "missing-folder")
+        res = subprocess.run(
+            [PYTHON_EXE, MAIN_PY, "--recover", target, "--password-stdin", "--quiet"],
+            input=self.password + "\n", capture_output=True, text=True, timeout=30
+        )
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("[ERROR]", res.stdout)
+        self.assertNotIn("Traceback", res.stderr)
+
     def test_cli_headless_lock_and_unlock_with_password_arg(self):
         # Create sample file in test_dir
         f = os.path.join(self.test_dir, "sample.txt")

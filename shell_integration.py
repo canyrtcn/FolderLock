@@ -12,26 +12,44 @@ Version 1.0.3 Updates:
 
 import os
 import sys
+import ctypes
 import winreg
 from typing import Tuple
 
 PROGID = "FolderLock.Vault"
+MENU_KEY = r"Software\Classes\Directory\shell\FolderLock"
+
+
+def _app_command(exe_path: str) -> str:
+    if not getattr(sys, "frozen", False) and os.path.normcase(exe_path) == os.path.normcase(sys.executable):
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py")
+        return f'"{exe_path}" "{script}" "%1"'
+    return f'"{exe_path}" "%1"'
+
+
+def _notify_explorer():
+    """Refresh cached associations without restarting Explorer."""
+    ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, None, None)
 
 
 def get_app_exe_path() -> str:
     """Returns absolute path to the current FolderLock executable."""
     if getattr(sys, 'frozen', False):
         return os.path.abspath(sys.executable)
-    dev_exe = os.path.abspath("FolderLock.exe")
-    if os.path.isfile(dev_exe):
-        return dev_exe
+    project_dir = os.path.dirname(os.path.abspath(__file__))
+    for relative_path in (os.path.join("dist", "FolderLock.exe"),
+                          os.path.join("dist", "FolderLock_portable", "FolderLock.exe"),
+                          "FolderLock.exe"):
+        dev_exe = os.path.join(project_dir, relative_path)
+        if os.path.isfile(dev_exe):
+            return dev_exe
     return os.path.abspath(sys.executable)
 
 
 def is_shell_integration_enabled() -> bool:
     """
-    Checks if shell integration is correctly enabled and points to a valid executable.
-    Returns True ONLY if registry keys exist AND command points to the current or existing executable.
+    True only when the folder command points to this copy of FolderLock.
+    A still-existing older portable copy is a stale registration.
     """
     if os.name != 'nt':
         return False
@@ -42,17 +60,10 @@ def is_shell_integration_enabled() -> bool:
             r"Software\Classes\Directory\shell\FolderLock\command"
         ) as key:
             cmd, _ = winreg.QueryValueEx(key, "")
-            if not cmd:
+            if not isinstance(cmd, str) or not cmd:
                 return False
-            # Check if command points to current exe_path
-            expected_prefix = f'"{exe_path}"'
-            if cmd.lower().startswith(expected_prefix.lower()):
-                return os.path.isfile(exe_path)
-            # If pointing to an existing FolderLock.exe elsewhere
-            if "folderlock.exe" in cmd.lower():
-                registered_path = cmd.split('"')[1] if '"' in cmd else cmd.split()[0]
-                return os.path.isfile(registered_path)
-            return False
+            return (cmd.casefold() == _app_command(exe_path).casefold()
+                    and os.path.isfile(exe_path))
     except OSError:
         return False
 
@@ -66,47 +77,106 @@ def setup_shell_integration() -> Tuple[bool, str]:
     if not exe_path or not os.path.isfile(exe_path):
         return False, f"FolderLock executable not found at: {exe_path}"
 
+    changes = []
     created_subkeys = []
-
     try:
-        # 1. Register .locked extension
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\.locked") as key:
-            winreg.SetValue(key, "", winreg.REG_SZ, PROGID)
-            created_subkeys.append(r"Software\Classes\.locked")
+        # .locked may already belong to another application. Refuse before
+        # touching any registry value rather than stealing its association.
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\.locked") as key:
+                owner, _ = winreg.QueryValueEx(key, "")
+                if owner and owner != PROGID:
+                    return False, "The .locked extension is registered to another application."
+        except FileNotFoundError:
+            pass
 
-        # 2. Register ProgID
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"Software\Classes\{PROGID}") as key:
-            winreg.SetValue(key, "", winreg.REG_SZ, "Locked Folder (FolderLock)")
-            created_subkeys.append(rf"Software\Classes\{PROGID}")
-
-        # 3. Default Icon (uses FolderLock's embedded icon)
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"Software\Classes\{PROGID}\DefaultIcon") as key:
-            winreg.SetValue(key, "", winreg.REG_SZ, f'"{exe_path}",0')
-
-        # 4. Double click command: launches FolderLock with target path
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"Software\Classes\{PROGID}\shell\open") as key:
-            winreg.SetValue(key, "", winreg.REG_SZ, "Unlock with FolderLock")
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"Software\Classes\{PROGID}\shell\open\command") as key:
-            winreg.SetValue(key, "", winreg.REG_SZ, f'"{exe_path}" "%1"')
-
-        # 5. Right-click context menu on normal folders: "FolderLock - Lock / Unlock"
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\Directory\shell\FolderLock") as key:
-            winreg.SetValue(key, "", winreg.REG_SZ, "FolderLock - Lock / Unlock")
-            winreg.SetValueEx(key, "Icon", 0, winreg.REG_SZ, f'"{exe_path}",0')
-            created_subkeys.append(r"Software\Classes\Directory\shell\FolderLock")
-
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\Directory\shell\FolderLock\command") as key:
-            winreg.SetValue(key, "", winreg.REG_SZ, f'"{exe_path}" "%1"')
+        command = _app_command(exe_path)
+        values = [
+            (r"Software\Classes\.locked", "", PROGID),
+            (rf"Software\Classes\{PROGID}", "", "Locked Folder (FolderLock)"),
+            (rf"Software\Classes\{PROGID}\DefaultIcon", "", f'"{exe_path}",0'),
+            (rf"Software\Classes\{PROGID}\shell", None, None),
+            (rf"Software\Classes\{PROGID}\shell\open", "", "Unlock with FolderLock"),
+            (rf"Software\Classes\{PROGID}\shell\open\command", "", command),
+            (MENU_KEY, "", "FolderLock - Lock / Unlock"),
+            (MENU_KEY, "Icon", f'"{exe_path}",0'),
+            (MENU_KEY + r"\command", "", command),
+        ]
+        for path, name, value in values:
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path):
+                    pass
+            except FileNotFoundError:
+                created_subkeys.append(path)
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, path) as key:
+                if name is None:
+                    continue
+                try:
+                    previous = winreg.QueryValueEx(key, name)
+                except FileNotFoundError:
+                    previous = None
+                changes.append((path, name, previous))
+                winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
 
         if not is_shell_integration_enabled():
             raise RuntimeError("Verification failed: registry command does not point to current executable.")
 
+        _notify_explorer()
         return True, "Shell integration configured successfully."
 
     except Exception as e:
-        # Rollback created keys
-        remove_shell_integration()
-        return False, f"Failed to configure shell integration: {e}"
+        rollback_errors = []
+        for path, name, previous in reversed(changes):
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE) as key:
+                    if previous is None:
+                        try:
+                            winreg.DeleteValue(key, name)
+                        except FileNotFoundError:
+                            pass
+                    else:
+                        winreg.SetValueEx(key, name, 0, previous[1], previous[0])
+            except OSError as rollback_error:
+                rollback_errors.append(str(rollback_error))
+        for path in reversed(created_subkeys):
+            try:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, path)
+            except OSError as rollback_error:
+                rollback_errors.append(str(rollback_error))
+        detail = f" Rollback errors: {'; '.join(rollback_errors)}" if rollback_errors else ""
+        return False, f"Failed to configure shell integration: {e}{detail}"
+
+
+def refresh_shell_integration() -> Tuple[bool, str]:
+    """Repair an already opted-in registration after moving/updating the EXE.
+
+    Never enable integration for a user who has not registered it. Only a
+    FolderLock command in our own menu key is eligible for automatic repair.
+    """
+    if os.name != "nt":
+        return False, "Shell integration is only supported on Windows."
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, MENU_KEY + r"\command") as key:
+            command, _ = winreg.QueryValueEx(key, "")
+        if is_shell_integration_enabled():
+            return True, "Shell integration is up to date."
+        if not isinstance(command, str):
+            return False, "Existing shell command is not a string."
+        parts = command.split('"')
+        if (len(parts) != 5 or parts[0] or parts[2] != " " or parts[4]
+                or parts[3] != "%1"):
+            return False, "Existing shell command is not a recognized FolderLock registration."
+        if os.path.basename(parts[1]).lower() != "folderlock.exe":
+            # A portable EXE may have been renamed. Our label and matching
+            # icon also identify registrations made by setup_shell_integration.
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, MENU_KEY) as key:
+                label, _ = winreg.QueryValueEx(key, "")
+                icon, _ = winreg.QueryValueEx(key, "Icon")
+            if label != "FolderLock - Lock / Unlock" or icon != f'"{parts[1]}",0':
+                return False, "Existing shell command is not a recognized FolderLock registration."
+        return setup_shell_integration()
+    except OSError as e:
+        return False, str(e)
 
 
 def remove_shell_integration() -> Tuple[bool, str]:
@@ -117,14 +187,11 @@ def remove_shell_integration() -> Tuple[bool, str]:
     def _delete_key_tree(root, subkey):
         try:
             with winreg.OpenKey(root, subkey, 0, winreg.KEY_ALL_ACCESS) as key:
-                while True:
-                    try:
-                        child = winreg.EnumKey(key, 0)
-                        _delete_key_tree(key, child)
-                    except OSError:
-                        break
+                while winreg.QueryInfoKey(key)[0]:
+                    child = winreg.EnumKey(key, 0)
+                    _delete_key_tree(key, child)
             winreg.DeleteKey(root, subkey)
-        except OSError:
+        except FileNotFoundError:
             pass
 
     try:
@@ -134,7 +201,7 @@ def remove_shell_integration() -> Tuple[bool, str]:
                 val, _ = winreg.QueryValueEx(k, "")
                 if val == PROGID:
                     _delete_key_tree(winreg.HKEY_CURRENT_USER, r"Software\Classes\.locked")
-        except OSError:
+        except FileNotFoundError:
             pass
 
         _delete_key_tree(winreg.HKEY_CURRENT_USER, r"Software\Classes\Directory\shell\FolderLock")
@@ -143,6 +210,7 @@ def remove_shell_integration() -> Tuple[bool, str]:
         if is_shell_integration_enabled():
             return False, "Failed to completely remove registry keys."
 
+        _notify_explorer()
         return True, "Shell integration removed successfully."
     except Exception as e:
         return False, f"Failed to remove shell integration: {e}"

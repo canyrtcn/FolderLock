@@ -13,6 +13,7 @@ Provides atomic, crash-resilient, non-clobbering filesystem operations:
 import os
 import sys
 import stat
+import errno
 import time
 import json
 import uuid
@@ -432,7 +433,10 @@ def move_no_replace(src: str, dst: str):
             elif err == ERROR_NOT_SAME_DEVICE:
                 raise SafeFSError(f"Cross-volume move refused between {src} and {dst}")
             elif err in (ERROR_SHARING_VIOLATION, ERROR_ACCESS_DENIED):
-                raise PermissionError(f"File in use or access denied during move {src} -> {dst} (WinError {err})")
+                raise PermissionError(
+                    errno.EACCES, "File in use or access denied during move",
+                    src, err, dst
+                )
             else:
                 raise ctypes.WinError(err)
     else:
